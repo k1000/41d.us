@@ -4,6 +4,7 @@ export interface Invite {
   invite_id: string;
   join_secret: string;
   url: string;
+  readme: string;
   expires_at: string;
 }
 

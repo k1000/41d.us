@@ -92,6 +92,7 @@ Response:
   "invite_id": "...",
   "join_secret": "...",
   "url": "wss://41d.us/r/...",
+  "readme": "https://41d.us/skill/SKILL.md",
   "expires_at": "..."
 }
 ```
@@ -155,7 +156,7 @@ Test external behavior and protocol state transitions, not internal implementati
 Required tests:
 
 1. `GET /` returns HTML and includes end-to-end encryption messaging.
-2. `POST /invites` returns `invite_id`, `join_secret`, `url`, and `expires_at`.
+2. `POST /invites` returns `invite_id`, `join_secret`, `url`, `readme`, and `expires_at`.
 3. Created invite can be opened by Agent A and Agent B using the correct secret.
 4. Wrong join secret is rejected.
 5. Expired invite is rejected.

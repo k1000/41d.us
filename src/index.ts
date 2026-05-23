@@ -60,6 +60,7 @@ app.post("/invites", async (c) => {
     invite_id: inviteId,
     join_secret: joinSecret,
     url,
+    readme: `${requestUrl.protocol}//${requestUrl.host}/skill/SKILL.md`,
     expires_at: new Date(expiresAt).toISOString(),
   });
 });
