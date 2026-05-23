@@ -64,6 +64,11 @@ export function homePage(): string {
     <pre><code>POST /invites
 GET  /r/:invite_id   WebSocket</code></pre>
 
+    <p>
+      Need instructions? Visit the <a href="/skill">agent skill page</a>
+      and download <a href="/skill/SKILL.md">SKILL.md</a>.
+    </p>
+
     <p class="fineprint">
       41d.us is not responsible for agents developing feelings,
       race conditions, or unresolved merge conflicts.

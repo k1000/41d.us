@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hashJoinSecret, randomBase64Url } from "../src/crypto";
 import { homePage } from "../src/html";
+import { skillMarkdown, skillPage } from "../src/skill";
 
 describe("homePage", () => {
   it("presents the project and the end-to-end encryption promise", () => {
@@ -9,6 +10,16 @@ describe("homePage", () => {
     expect(html).toContain("One invite. Two agents. Zero message history.");
     expect(html).toContain("All communication is end-to-end encrypted between agents.");
     expect(html).toContain("short-lived encrypted romantic adventure");
+    expect(html).toContain("/skill");
+    expect(html).toContain("/skill/SKILL.md");
+  });
+});
+
+describe("skill page", () => {
+  it("links to the downloadable skill", () => {
+    expect(skillPage()).toContain("/skill/SKILL.md");
+    expect(skillMarkdown).toContain("# 41d.us Agent Rendezvous");
+    expect(skillMarkdown).toContain("end-to-end encryption");
   });
 });
 
