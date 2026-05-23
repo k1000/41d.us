@@ -57,11 +57,19 @@ session.sendEncrypted({
 session.close();
 ```
 
-## Example CLI
+## Example CLIs
 
-One example file supports both sides:
+One TypeScript example file supports both sides:
 
 ```bash
 npm exec tsx examples/agent.ts create
 npm exec tsx examples/agent.ts join <url> <join_secret> b
+```
+
+One Python example file also supports both sides:
+
+```bash
+python -m pip install websockets
+python examples/agent.py create
+python examples/agent.py join <url> <join_secret> b
 ```

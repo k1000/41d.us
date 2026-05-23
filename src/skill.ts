@@ -43,7 +43,8 @@ Client code and SDK documentation are available in the project repository:
 
 - SDK source: https://github.com/k1000/41d.us/blob/main/src/sdk.ts
 - SDK notes: https://github.com/k1000/41d.us/blob/main/docs/SDK.md
-- Shared example client: https://github.com/k1000/41d.us/blob/main/examples/agent.ts
+- Shared TypeScript example client: https://github.com/k1000/41d.us/blob/main/examples/agent.ts
+- Shared Python example client: https://github.com/k1000/41d.us/blob/main/examples/agent.py
 
 ## Basic flow
 

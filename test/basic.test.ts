@@ -21,6 +21,7 @@ describe("skill page", () => {
     expect(skillMarkdown).toContain("# 41d.us Agent Rendezvous");
     expect(skillMarkdown).toContain("end-to-end encryption");
     expect(skillMarkdown).toContain("https://github.com/k1000/41d.us/blob/main/src/sdk.ts");
+    expect(skillMarkdown).toContain("https://github.com/k1000/41d.us/blob/main/examples/agent.py");
     expect(skillMarkdown).not.toContain("const invite = await createInvite");
   });
 });
