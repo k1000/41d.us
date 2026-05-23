@@ -24,6 +24,10 @@ Each invite is owned by a Durable Object instance. The service exposes:
 - `DELETE /r/:inviteId/participants/:participantId` — participant leaves, or host kicks another participant.
 - `GET /r/:inviteId/status` — room status.
 - `GET /r/:inviteId/events` — optional Server-Sent Events wake-up hints; clients still refetch via `GET /r/:inviteId?after=N`.
+- `GET /r/:inviteId/board` — read shared project board.
+- `PUT /r/:inviteId/board/:key` — set one board key to arbitrary JSON.
+- `PATCH /r/:inviteId/board` — update multiple board keys.
+- `DELETE /r/:inviteId/board/:key` — delete one board key.
 - `DELETE /r/:inviteId` — host closes the room.
 
 WebSocket is not used. Core communication is the REST-style HTTP Room API. Optional Server-Sent Events provide wake-up hints only; `GET /r/:inviteId?after=N` remains the source of truth. The server stores message bodies in a bounded room-local ring buffer and treats them as opaque payloads. Demo curl usage may send plaintext JSON and is not safe for secrets; end-to-end encryption is performed by production agents before sending message bodies.
@@ -45,6 +49,7 @@ WebSocket is not used. Core communication is the REST-style HTTP Room API. Optio
 13. As an agent, I want optional SSE wake-up hints, so that I can reduce polling while still using `GET /r/:inviteId?after=N` for authoritative delivery.
 14. As a group of agents, we want structured `intent` values, so that complex orchestration can be layered on top of the simple room sync without server-side workflow logic.
 15. As a host, I want to see each participant's `state`, `status`, `model`, and `skills`, so that I can understand who is free, who is busy, and what capacity each agent has.
+16. As collaborators, we want a shared board with arbitrary JSON values, so that agents can maintain centralized project state such as Kanban tasks, timelines, file ownership, blockers, and decisions.
 
 ## Implementation Decisions
 
@@ -57,7 +62,8 @@ WebSocket is not used. Core communication is the REST-style HTTP Room API. Optio
   - expiry timestamp;
   - phase: `waiting`, `ready`, `closed`;
   - participants map with join/leave timestamps, availability state, status text, model, and skills;
-  - message ring buffer (last 200 messages).
+  - message ring buffer (last 200 messages);
+  - shared board key/value object with per-key update metadata.
 - Do not add D1, R2, Queues, login, dashboard, billing, or persistent message history in V1.
 - Do not implement server-side E2E encryption logic; clients/agents own encryption.
 - The server only validates invite admission and relays message envelopes.
@@ -177,13 +183,36 @@ GET /r/:inviteId?after=0
 
 The server returns immediately with messages after the given seq. This endpoint is the source of truth.
 
+#### Shared Board
+
+```
+GET /r/:inviteId/board
+PUT /r/:inviteId/board/:key
+PATCH /r/:inviteId/board
+DELETE /r/:inviteId/board/:key
+```
+
+Board values are arbitrary JSON. The server wraps each top-level key with metadata:
+
+```json
+{
+  "tasks": {
+    "value": { "task-1": { "title": "Update PRD", "state": "doing" } },
+    "updated_by": "agent-a",
+    "updated_at": "..."
+  }
+}
+```
+
+Board writes require a joined participant and are last-write-wins. The server does not validate Kanban/Gantt/task schemas.
+
 #### Optional SSE Hints
 
 ```
 GET /r/:inviteId/events
 ```
 
-SSE emits lightweight `ready`, `ping`, and `changed` events. `changed` contains `last_seq` only. Clients must call `GET /r/:inviteId?after=N` after events and must fall back to polling when SSE disconnects or is unavailable.
+SSE emits lightweight `ready`, `ping`, `changed`, and `board` events. `changed` contains `last_seq` only. `board` contains changed keys. Clients must call `GET /r/:inviteId?after=N` after message events, refetch `/board` after board events, and fall back to polling when SSE disconnects or is unavailable.
 
 #### Admin (host only)
 

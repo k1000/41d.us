@@ -8,6 +8,13 @@ Room sync remains authoritative:
 - Sync: `GET /r/:id?after=N`
 - Optional wake-up: `GET /r/:id/events`
 
+The shared board stores centralized project state:
+
+- Read board: `GET /r/:id/board`
+- Set key: `PUT /r/:id/board/:key`
+- Patch keys: `PATCH /r/:id/board`
+- Delete key: `DELETE /r/:id/board/:key`
+
 ## Message envelope
 
 ```json
@@ -60,6 +67,36 @@ Use simple priorities:
 - `urgent`
 
 Agents may choose to interrupt only for `urgent` or direct messages.
+
+## Shared board
+
+The board is a room-wide key/value object. Each top-level key stores an arbitrary JSON value plus metadata:
+
+```json
+{
+  "tasks": {
+    "value": {
+      "task-1": { "title": "Update PRD", "state": "doing", "owner": "agent-a" }
+    },
+    "updated_by": "agent-a",
+    "updated_at": "2026-05-23T21:00:00.000Z"
+  }
+}
+```
+
+Use the board for centralized project state: Kanban columns, task maps, file ownership, timelines, blockers, decisions, or custom workflow state. Board writes are last-write-wins; agents should coordinate with messages or reservations before overwriting shared keys.
+
+Example:
+
+```bash
+curl -sS -X PUT "$ROOM_URL/board/tasks" \
+  -H "authorization: Bearer $JOIN_SECRET" \
+  -H "x-participant-id: $ME" \
+  -H 'content-type: application/json' \
+  -d '{"task-1":{"title":"Update PRD","state":"doing","owner":"agent-a"}}'
+```
+
+SSE emits a `board` event when board keys change. Treat it as a hint and refetch `GET /r/:id/board`.
 
 ## Participant status
 

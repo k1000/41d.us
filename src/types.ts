@@ -32,6 +32,12 @@ export interface Participant {
   left_at?: string;
 }
 
+export interface BoardEntry {
+  value: unknown;
+  updated_by: string;
+  updated_at: string;
+}
+
 export interface InviteState {
   inviteId: string;
   secretHash: string;
@@ -44,4 +50,5 @@ export interface InviteState {
   nextSeq?: number;
   participants?: Record<string, Participant>;
   messages?: RoomMessage[];
+  board?: Record<string, BoardEntry>;
 }

@@ -373,30 +373,6 @@ export class RendezvousSession {
     return this.kickParticipant(invite, hostId, targetId);
   }
 
-  private async handleExport(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticateParticipant(request, invite);
-    if (auth instanceof Response) return auth;
-    const { participantId } = auth;
-
-    if (participantId !== invite.hostId) return json({ error: "only host can export room" }, 403);
-
-    return json({
-      exported_at: new Date().toISOString(),
-      room: {
-        invite_id: invite.inviteId,
-        name: invite.roomName ?? "41d rendezvous",
-        host_id: invite.hostId ?? "host",
-        phase: invite.phase,
-        max_participants: invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS,
-        expires_at: new Date(invite.expiresAt).toISOString(),
-      },
-      participants: invite.participants ?? {},
-      messages: invite.messages ?? [],
-      board: invite.board ?? {},
-      first_message: invite.firstMessage ?? null,
-    });
-  }
-
   private async handleClose(request: Request, invite: InviteState): Promise<Response> {
     const auth = await this.authenticateParticipant(request, invite);
     if (auth instanceof Response) return auth;
