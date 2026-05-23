@@ -86,11 +86,11 @@ describe("invite creation", () => {
       },
     };
 
-    const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify({ host_id: "CalmPhoenix", room_name: "review room", max_participants: 7 }) }), env);
-    const body = (await response.json()) as { intro: string; next_step: string; room: { name: string; host_id: string; max_participants: number }; host_id?: string; max_participants?: number; instructions: string; readme: string; skill: string };
+    const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify({ host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, purpose: "Review the mailbox API." }) }), env);
+    const body = (await response.json()) as { intro: string; next_step: string; room: { name: string; host_id: string; max_participants: number; purpose?: { text?: string } }; host_id?: string; max_participants?: number; instructions: string; readme: string; skill: string };
 
     expect(body.intro).toContain("invited by CalmPhoenix");
-    expect(body.room).toEqual({ name: "review room", host_id: "CalmPhoenix", max_participants: 7 });
+    expect(body.room).toEqual({ name: "review room", host_id: "CalmPhoenix", max_participants: 7, purpose: { text: "Review the mailbox API." } });
     expect(body.host_id).toBeUndefined();
     expect(body.max_participants).toBeUndefined();
     expect(body.next_step).toBe("Open instructions and follow the Join now command.");

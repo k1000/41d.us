@@ -33,6 +33,7 @@ export interface InviteState {
   hostId?: string;
   roomName?: string;
   maxParticipants?: number;
+  firstMessage?: Record<string, unknown>;
   nextSeq?: number;
   participants?: Record<string, Participant>;
   messages?: RoomMessage[];

@@ -18,7 +18,18 @@ export class RendezvousSession {
       const body = (await request.json()) as InviteState;
       const existing = await this.getInvite();
       if (existing && existing.phase !== "closed") return json({ error: "invite already exists" }, 409);
-      await this.state.storage.put(STATE_KEY, { ...body, nextSeq: 0, participants: {}, messages: [] } satisfies InviteState);
+      const firstMessage = body.firstMessage ? [{
+        id: crypto.randomUUID(),
+        seq: 1,
+        from: body.hostId ?? "host",
+        to: "all" as const,
+        reply_to: null,
+        intent: "room_purpose",
+        priority: "normal",
+        body: body.firstMessage,
+        created_at: new Date().toISOString(),
+      }] : [];
+      await this.state.storage.put(STATE_KEY, { ...body, nextSeq: firstMessage.length, participants: {}, messages: firstMessage } satisfies InviteState);
       return json({ ok: true });
     }
 

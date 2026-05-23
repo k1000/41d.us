@@ -41,10 +41,11 @@ app.get("/skill/SKILL.md", (c) =>
 );
 
 app.post("/invites", async (c) => {
-  const body = await c.req.json().catch(() => ({})) as { host_id?: string; room_name?: string; max_participants?: number };
+  const body = await c.req.json().catch(() => ({})) as { host_id?: string; room_name?: string; max_participants?: number; purpose?: string; first_message?: string | Record<string, unknown> };
   const hostId = sanitizeId(body.host_id ?? "host");
   const roomName = typeof body.room_name === "string" && body.room_name.trim() ? body.room_name.trim().slice(0, 80) : "41d rendezvous";
   const maxParticipants = Math.min(Math.max(Math.trunc(body.max_participants ?? 16), 2), 64);
+  const firstMessage = normalizeFirstMessage(body.first_message ?? body.purpose, roomName);
   const inviteId = randomBase64Url(16);
   const joinSecret = randomBase64Url(32);
   const expiresAt = Date.now() + INVITE_TTL_MS;
@@ -58,6 +59,7 @@ app.post("/invites", async (c) => {
     hostId,
     roomName,
     maxParticipants,
+    ...(firstMessage ? { firstMessage } : {}),
   };
 
   const id = c.env.RENDEZVOUS.idFromName(inviteId);
@@ -84,6 +86,7 @@ app.post("/invites", async (c) => {
       name: roomName,
       host_id: hostId,
       max_participants: maxParticipants,
+      purpose: firstMessage,
     },
     join_secret: joinSecret,
     url: roomUrl,
@@ -117,6 +120,15 @@ app.all("/r/:inviteId/*", (c) => {
 });
 
 app.notFound((c) => c.text("not found", 404));
+
+function normalizeFirstMessage(value: string | Record<string, unknown> | undefined, roomName: string): Record<string, unknown> | undefined {
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text ? { text } : undefined;
+  }
+  if (value && typeof value === "object") return value;
+  return { text: `Room purpose: ${roomName}` };
+}
 
 function sanitizeId(value: string): string {
   const id = value.trim() || "host";
