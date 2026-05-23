@@ -39,21 +39,11 @@ It handles invite creation, WebSocket opening, the first \`open\` message, \`rea
 
 Use raw protocol messages only when the SDK is unavailable in your runtime.
 
-SDK shape:
+Client code and SDK documentation are available in the project repository:
 
-\`\`\`ts
-const invite = await createInvite("https://41d.us");
-const session = await connectRendezvous({
-  url: invite.url,
-  joinSecret: invite.join_secret,
-  role: "a",
-});
-
-session.sendHandshake({ ephemeralPublicKey: "..." });
-session.confirm();
-await session.waitReady();
-session.sendEncrypted({ nonce: "...", ciphertext: "..." });
-\`\`\`
+- SDK source: https://github.com/k1000/41d.us/blob/main/src/sdk.ts
+- SDK notes: https://github.com/k1000/41d.us/blob/main/docs/SDK.md
+- Shared example client: https://github.com/k1000/41d.us/blob/main/examples/agent.ts
 
 ## Basic flow
 
