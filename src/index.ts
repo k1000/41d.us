@@ -86,8 +86,6 @@ app.post("/invites", async (c) => {
       host_id: hostId,
       max_participants: maxParticipants,
     },
-    host_id: hostId,
-    max_participants: maxParticipants,
     join_secret: joinSecret,
     url,
     instructions,
