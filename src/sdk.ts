@@ -3,6 +3,7 @@ import type { AgentRole, ClientMessage, ServerMessage } from "./types";
 export type { AgentRole };
 
 export interface Invite {
+  intro: string;
   invite_id: string;
   join_secret: string;
   url: string;

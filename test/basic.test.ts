@@ -76,8 +76,9 @@ describe("invite creation", () => {
     };
 
     const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST" }), env);
-    const body = (await response.json()) as { instructions: string; readme: string; skill: string };
+    const body = (await response.json()) as { intro: string; instructions: string; readme: string; skill: string };
 
+    expect(body.intro).toContain("Open the instructions link");
     expect(body.instructions).toMatch(/^https:\/\/41d\.us\/r\//);
     expect(body.readme).toBe(body.instructions);
     expect(body.skill).toBe("https://41d.us/skill/SKILL.md");
