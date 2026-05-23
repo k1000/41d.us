@@ -1,3 +1,4 @@
+import { Validator } from "@cfworker/json-schema";
 import { DEFAULT_MAX_PARTICIPANTS, MAX_BOARD_VALUE_BYTES, MAX_BODY_BYTES, MAX_MESSAGES } from "./constants";
 import { hashJoinSecret } from "./crypto";
 import { json, respondNegotiated } from "./format";
@@ -38,7 +39,11 @@ export class RendezvousSession {
         body: body.firstMessage,
         created_at: new Date().toISOString(),
       }] : [];
-      await this.state.storage.put(STATE_KEY, { ...body, nextSeq: firstMessage.length, participants: {}, messages: firstMessage } satisfies InviteState);
+      const board = wrapInitialBoard(body.initialBoard, body.hostId ?? "host");
+      const validation = validateBoard(body.boardSchema, board);
+      if (validation) return validation;
+      const { initialBoard: _initialBoard, ...stateToStore } = body;
+      await this.state.storage.put(STATE_KEY, { ...stateToStore, nextSeq: firstMessage.length, participants: {}, messages: firstMessage, board } satisfies InviteState);
       return json({ ok: true });
     }
 
@@ -62,15 +67,6 @@ export class RendezvousSession {
     if (url.pathname.endsWith("/status") && request.method === "GET") return this.handleStatus(request, invite);
     if (url.pathname.endsWith("/events") && request.method === "GET") return this.handleEvents(request, invite);
 
-    if (url.pathname.endsWith("/join") && request.method === "POST") return this.handleJoin(request, invite);
-    if (url.pathname.endsWith("/messages") && request.method === "POST") return this.handleSend(request, invite);
-    if (url.pathname.endsWith("/messages/read") && request.method === "POST") return this.handleRead(request, invite);
-    if (url.pathname.endsWith("/participants") && request.method === "POST") return this.handleParticipants(request, invite);
-    if (url.pathname.endsWith("/status") && request.method === "POST") return this.handleStatus(request, invite);
-    if (url.pathname.endsWith("/kick") && request.method === "POST") return this.handleKick(request, invite);
-    if (url.pathname.endsWith("/close") && request.method === "POST") return this.handleClose(request, invite);
-    if (url.pathname.endsWith("/leave") && request.method === "POST") return this.handleLeave(request, invite);
-
     if (request.headers.get("Upgrade") === "websocket") {
       return new Response("WebSocket transport has been removed. Use the collab space.", { status: 410 });
     }
@@ -87,15 +83,15 @@ export class RendezvousSession {
 
   private async authenticate(request: Request, invite: InviteState): Promise<Record<string, unknown> | Response> {
     const body = await readJsonObject(request);
-    const auth = await this.authorizeToken(invite, tokenFromRequest(request, body));
+    const auth = await this.authorizeToken(invite, tokenFromRequest(request));
     if (auth) return auth;
     return body;
   }
 
   private async authorizeToken(invite: InviteState, token: string | undefined): Promise<Response | undefined> {
-    if (!token) return json({ error: "admission_token is required" }, 401);
+    if (!token) return json({ error: "authorization token is required" }, 401);
     const tokenHash = await hashJoinSecret(invite.inviteId, token);
-    if (tokenHash !== invite.secretHash) return json({ error: "invalid admission_token" }, 403);
+    if (tokenHash !== invite.secretHash) return json({ error: "invalid authorization token" }, 403);
     return undefined;
   }
 
@@ -106,27 +102,18 @@ export class RendezvousSession {
   private async authenticateParticipant(request: Request, invite: InviteState): Promise<{ body: Record<string, unknown>; participantId: string } | Response> {
     const body = await this.authenticate(request, invite);
     if (body instanceof Response) return body;
-    const participantId = requireParticipantId(body.participant_id ?? request.headers.get("x-participant-id"));
-    if (participantId instanceof Response) return participantId;
-    return { body, participantId };
-  }
-
-  private async authenticatePathParticipant(request: Request, invite: InviteState, pathParticipantId: string): Promise<{ body: Record<string, unknown>; participantId: string } | Response> {
-    const body = await this.authenticate(request, invite);
-    if (body instanceof Response) return body;
-    const participantId = requireParticipantId(pathParticipantId);
+    const participantId = requireParticipantId(request.headers.get("x-participant-id"));
     if (participantId instanceof Response) return participantId;
     return { body, participantId };
   }
 
   // ── Handlers ──────────────────────────────────────────────────
 
-  private async handleJoin(request: Request, invite: InviteState, pathParticipantId?: string): Promise<Response> {
-    const auth = pathParticipantId
-      ? await this.authenticatePathParticipant(request, invite, pathParticipantId)
-      : await this.authenticateParticipant(request, invite);
-    if (auth instanceof Response) return auth;
-    const { participantId } = auth;
+  private async handleJoin(request: Request, invite: InviteState, pathParticipantId: string): Promise<Response> {
+    const body = await this.authenticate(request, invite);
+    if (body instanceof Response) return body;
+    const participantId = requireParticipantId(pathParticipantId);
+    if (participantId instanceof Response) return participantId;
 
     const participants = invite.participants ?? {};
     if (!participants[participantId] && this.activeCount(participants) >= (invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS)) {
@@ -134,9 +121,9 @@ export class RendezvousSession {
     }
     if (participants[participantId] && !participants[participantId].left_at) return json({ error: "participant_id already joined" }, 409);
     const now = new Date().toISOString();
-    const model = normalizeParticipantModel(auth.body.model);
+    const model = normalizeParticipantModel(body.model);
     if (model instanceof Response) return model;
-    const skills = normalizeParticipantSkills(auth.body.skills);
+    const skills = normalizeParticipantSkills(body.skills);
     if (skills instanceof Response) return skills;
     participants[participantId] = { id: participantId, joined_at: now, last_seen_at: now, state: "free", status: "joined", status_updated_at: now, ...(model ? { model } : {}), ...(skills ? { skills } : {}) };
     const updated = { ...invite, phase: "ready", participants } satisfies InviteState;
@@ -194,9 +181,9 @@ export class RendezvousSession {
 
   private async handleEvents(request: Request, invite: InviteState): Promise<Response> {
     const url = new URL(request.url);
-    const auth = await this.authorizeToken(invite, tokenFromRequest(request, {}));
+    const auth = await this.authorizeToken(invite, tokenFromRequest(request));
     if (auth) return auth;
-    const participantResult = requireParticipantId(url.searchParams.get("participant_id") ?? request.headers.get("x-participant-id"));
+    const participantResult = requireParticipantId(request.headers.get("x-participant-id"));
     if (participantResult instanceof Response) return participantResult;
     const participantId = participantResult;
     if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
@@ -234,7 +221,7 @@ export class RendezvousSession {
   private async handleGetBoard(request: Request, invite: InviteState): Promise<Response> {
     const auth = await this.authenticate(request, invite);
     if (auth instanceof Response) return auth;
-    return json({ room: roomInfo(invite), board: invite.board ?? {} });
+    return json({ room: roomInfo(invite), board: invite.board ?? {}, board_schema: invite.boardSchema ?? null });
   }
 
   private async handleGetBoardKey(request: Request, invite: InviteState, keyFromPath: string): Promise<Response> {
@@ -257,6 +244,8 @@ export class RendezvousSession {
     const entryResult = makeBoardEntry(body, participantId);
     if (entryResult instanceof Response) return entryResult;
     const board = { ...(invite.board ?? {}), [key]: entryResult };
+    const validation = validateBoard(invite.boardSchema, board);
+    if (validation) return validation;
     await this.state.storage.put(STATE_KEY, { ...invite, board } satisfies InviteState);
     this.notifyBoard(key, participantId);
     return json({ ok: true, key, entry: entryResult });
@@ -277,6 +266,8 @@ export class RendezvousSession {
       board[key] = entryResult;
       updated[key] = entryResult;
     }
+    const validation = validateBoard(invite.boardSchema, board);
+    if (validation) return validation;
     await this.state.storage.put(STATE_KEY, { ...invite, board } satisfies InviteState);
     this.notifyBoard(Object.keys(updated), participantId);
     return json({ ok: true, updated, board });
@@ -291,6 +282,8 @@ export class RendezvousSession {
     if (key instanceof Response) return key;
     const board = { ...(invite.board ?? {}) };
     delete board[key];
+    const validation = validateBoard(invite.boardSchema, board);
+    if (validation) return validation;
     await this.state.storage.put(STATE_KEY, { ...invite, board } satisfies InviteState);
     this.notifyBoard(key, participantId);
     return json({ ok: true, deleted: key });
@@ -305,20 +298,13 @@ export class RendezvousSession {
     });
   }
 
-  private async handleLeave(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticateParticipant(request, invite);
-    if (auth instanceof Response) return auth;
-    const { participantId } = auth;
-    return this.leaveParticipant(invite, participantId);
-  }
-
   private async handleUpdateParticipant(request: Request, invite: InviteState, participantIdFromPath: string): Promise<Response> {
     const body = await this.authenticate(request, invite);
     if (body instanceof Response) return body;
     const participantResult = requireParticipantId(participantIdFromPath);
     if (participantResult instanceof Response) return participantResult;
     const participantId = participantResult as string;
-    const actorResult = requireParticipantId(body.participant_id ?? request.headers.get("x-participant-id") ?? participantId);
+    const actorResult = requireParticipantId(request.headers.get("x-participant-id") ?? participantId);
     if (actorResult instanceof Response) return actorResult;
     const actorId = actorResult as string;
     if (actorId !== participantId && actorId !== invite.hostId) return json({ error: "only participant or host can update participant status" }, 403);
@@ -354,23 +340,11 @@ export class RendezvousSession {
     const targetResult = requireParticipantId(targetIdFromPath);
     if (targetResult instanceof Response) return targetResult;
     const targetId = targetResult as string;
-    const actorResult = requireParticipantId(body.participant_id ?? request.headers.get("x-participant-id") ?? targetId);
+    const actorResult = requireParticipantId(request.headers.get("x-participant-id") ?? targetId);
     if (actorResult instanceof Response) return actorResult;
     const actorId = actorResult as string;
     if (actorId === targetId) return this.leaveParticipant(invite, targetId);
     return this.kickParticipant(invite, actorId, targetId);
-  }
-
-  private async handleKick(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticateParticipant(request, invite);
-    if (auth instanceof Response) return auth;
-    const { body, participantId: hostId } = auth;
-
-    const targetResult = requireParticipantId(body.target_id);
-    if (targetResult instanceof Response) return json({ error: "target_id is required" }, 400);
-    const targetId = targetResult as string;
-
-    return this.kickParticipant(invite, hostId, targetId);
   }
 
   private async handleClose(request: Request, invite: InviteState): Promise<Response> {
@@ -498,12 +472,9 @@ async function readJsonObject(request: Request): Promise<Record<string, unknown>
   return (await request.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
-function tokenFromRequest(request: Request, body: Record<string, unknown>): string | undefined {
+function tokenFromRequest(request: Request): string | undefined {
   const authorization = request.headers.get("authorization") ?? "";
-  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
-  if (bearer) return bearer;
-  const url = new URL(request.url);
-  return (body.admission_token ?? body.join_secret ?? url.searchParams.get("admission_token") ?? url.searchParams.get("join_secret")) as string | undefined;
+  return authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
 }
 
 function isRoomRoot(url: URL, inviteId: string): boolean {
@@ -521,6 +492,39 @@ function roomInfo(invite: InviteState) {
     host_id: invite.hostId ?? "host",
     max_participants: invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS,
   };
+}
+
+function wrapInitialBoard(initialBoard: Record<string, unknown> | undefined, updatedBy: string): Record<string, BoardEntry> {
+  if (!initialBoard) return {};
+  const board: Record<string, BoardEntry> = {};
+  for (const [rawKey, value] of Object.entries(initialBoard)) {
+    const key = sanitizeId(rawKey).slice(0, 80);
+    if (!key) continue;
+    board[key] = { value, updated_by: updatedBy, updated_at: new Date().toISOString() };
+  }
+  return board;
+}
+
+function unwrapBoard(board: Record<string, BoardEntry>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(board).map(([key, entry]) => [key, entry.value]));
+}
+
+function validateBoard(schema: Record<string, unknown> | undefined, board: Record<string, BoardEntry>): Response | undefined {
+  if (!schema) return undefined;
+  try {
+    const result = new Validator(schema, "7").validate(unwrapBoard(board));
+    if (result.valid) return undefined;
+    return json({
+      error: "board schema validation failed",
+      issues: result.errors.map((issue) => ({
+        path: issue.instanceLocation.replace(/^#/, "") || "/",
+        message: issue.error,
+        keyword: issue.keyword,
+      })),
+    }, 422);
+  } catch (error) {
+    return json({ error: "invalid board_schema", message: error instanceof Error ? error.message : String(error) }, 400);
+  }
 }
 
 function normalizeBoardKey(value: unknown): string | Response {

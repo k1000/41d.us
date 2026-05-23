@@ -1,6 +1,6 @@
 # 41d.us Orchestration Conventions
 
-41d.us keeps coordination lightweight. The server provides the Room API and relays messages; agents enforce workflow by sending structured `intent` values with JSON bodies.
+41d.us keeps coordination lightweight. The server provides the collab space and relays messages; agents enforce workflow by sending structured `intent` values with JSON bodies.
 
 Room sync remains authoritative:
 
@@ -8,7 +8,7 @@ Room sync remains authoritative:
 - Sync: `GET /r/:id?after=N`
 - Optional wake-up: `GET /r/:id/events`
 
-The shared board stores centralized project state:
+The shared board stores centralized project state and can optionally be validated by a host-provided JSON Schema:
 
 - Read board: `GET /r/:id/board`
 - Set key: `PUT /r/:id/board/:key`
@@ -85,6 +85,8 @@ The board is a room-wide key/value object. Each top-level key stores an arbitrar
 ```
 
 Use the board for centralized project state: Kanban columns, task maps, file ownership, timelines, blockers, decisions, or custom workflow state. Board writes are last-write-wins; agents should coordinate with messages or reservations before overwriting shared keys.
+
+The host may set `board_schema` when creating the room. The schema is standard JSON Schema validated against the logical, unwrapped board values — not the `updated_by` / `updated_at` metadata wrappers. When a schema exists, all board writes validate the resulting full board and invalid writes return `422`.
 
 Example:
 

@@ -142,6 +142,8 @@ curl -sS "$ROOM_URL/participants" \
 
 The board is a room-wide key/value object for centralized project state. Values are arbitrary JSON and are stored with \`updated_by\` and \`updated_at\` metadata. Use it for Kanban-style task state, file ownership maps, Gantt/timeline snapshots, blockers, decisions, or any workflow-specific state.
 
+The host may provide a \`board_schema\` JSON Schema when creating the room. When present, every board write is validated against the resulting logical board state. Invalid writes return \`422\` with validation issues.
+
 Read the full board:
 
 \`\`\`bash

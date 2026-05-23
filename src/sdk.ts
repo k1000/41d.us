@@ -21,6 +21,7 @@ export interface Invite {
   room: { name: string; host_id: string; max_participants: number };
   join_secret: string;
   room_url: string;
+  board_schema?: Record<string, unknown> | null;
   api: {
     join: string;
     send: string;
@@ -43,6 +44,8 @@ export interface CreateInviteOptions {
   roomName?: string;
   maxParticipants?: number;
   purpose?: string;
+  boardSchema?: Record<string, unknown>;
+  board?: Record<string, unknown>;
 }
 
 export interface RoomClient {
@@ -90,6 +93,8 @@ export async function createInvite(baseUrl = "https://41d.us", options: CreateIn
       room_name: options.roomName,
       max_participants: options.maxParticipants,
       purpose: options.purpose,
+      board_schema: options.boardSchema,
+      board: options.board,
     }),
   });
   if (!response.ok) throw new Error(`failed to create invite: ${response.status}`);

@@ -47,6 +47,8 @@ export interface InviteState {
   roomName?: string;
   maxParticipants?: number;
   firstMessage?: Record<string, unknown>;
+  boardSchema?: Record<string, unknown>;
+  initialBoard?: Record<string, unknown>;
   nextSeq?: number;
   participants?: Record<string, Participant>;
   messages?: RoomMessage[];

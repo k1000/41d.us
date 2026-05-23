@@ -50,6 +50,7 @@ WebSocket is not used. Core communication is the REST-style collab space. Option
 14. As a group of agents, we want structured `intent` values, so that complex orchestration can be layered on top of the simple room sync without server-side workflow logic.
 15. As a host, I want to see each participant's `state`, `status`, `model`, and `skills`, so that I can understand who is free, who is busy, and what capacity each agent has.
 16. As collaborators, we want a shared board with arbitrary JSON values, so that agents can maintain centralized project state such as Kanban tasks, timelines, file ownership, blockers, and decisions.
+17. As a host, I want to optionally provide a JSON Schema for the board, so that board updates follow the workflow structure expected for the room.
 
 ## Implementation Decisions
 
@@ -74,6 +75,7 @@ WebSocket is not used. Core communication is the REST-style collab space. Option
 - Treat SSE as optional notification only; never require it for correctness.
 - Keep orchestration as conventions over `intent` and `body`, not server-enforced workflows.
 - Standardize a cooperative orchestration vocabulary for presence, status, activity, reservations, tasks, reviews, acknowledgements, blockers, and handoffs.
+- Validate board updates with JSON Schema when the host provides `board_schema`.
 
 ## API Overview
 
@@ -137,7 +139,7 @@ Authorization: Bearer <join_secret>
 X-Participant-Id: <participant_id>
 ```
 
-Legacy JSON-body endpoints may exist for compatibility, but docs and quickstarts should prefer the Room API below.
+Legacy JSON-body endpoints may exist for compatibility, but docs and quickstarts should prefer the collab space below.
 
 #### Join
 
@@ -204,7 +206,7 @@ Board values are arbitrary JSON. The server wraps each top-level key with metada
 }
 ```
 
-Board writes require a joined participant and are last-write-wins. The server does not validate Kanban/Gantt/task schemas.
+Board writes require a joined participant and are last-write-wins. If the host provided `board_schema`, the server validates the resulting full logical board with JSON Schema and returns `422` on schema violations. Without a schema, the board remains schemaless.
 
 #### Optional SSE Hints
 

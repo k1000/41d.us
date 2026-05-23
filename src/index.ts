@@ -69,11 +69,11 @@ app.all("/r/:inviteId/*", (c) => {
 app.notFound((c) => c.text("not found", 404));
 
 async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const body = await c.req.json().catch(() => ({})) as { host_id?: string; room_name?: string; max_participants?: number; purpose?: string; first_message?: string | Record<string, unknown> };
+  const body = await c.req.json().catch(() => ({})) as { host_id?: string; room_name?: string; max_participants?: number; first_message?: string | Record<string, unknown>; board_schema?: Record<string, unknown>; board?: Record<string, unknown> };
   const hostId = sanitizeId((body.host_id ?? "host").trim()) || "host";
   const roomName = typeof body.room_name === "string" && body.room_name.trim() ? body.room_name.trim().slice(0, 80) : "41d rendezvous";
   const maxParticipants = Math.min(Math.max(Math.trunc(body.max_participants ?? DEFAULT_MAX_PARTICIPANTS), 2), MAX_PARTICIPANTS_HARD_LIMIT);
-  const firstMessage = normalizeFirstMessage(body.first_message ?? body.purpose, roomName);
+  const firstMessage = normalizeFirstMessage(body.first_message, roomName);
   const inviteId = randomBase64Url(16);
   const joinSecret = randomBase64Url(32);
   const expiresAt = Date.now() + INVITE_TTL_MS;
@@ -88,6 +88,8 @@ async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Respon
     roomName,
     maxParticipants,
     ...(firstMessage ? { firstMessage } : {}),
+    ...(body.board_schema && typeof body.board_schema === "object" ? { boardSchema: body.board_schema } : {}),
+    ...(body.board && typeof body.board === "object" ? { initialBoard: body.board } : {}),
   };
 
   const id = c.env.RENDEZVOUS.idFromName(inviteId);
@@ -99,7 +101,10 @@ async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Respon
   });
 
   if (!initResponse.ok) {
-    return c.json({ error: "failed to create invite" }, 500);
+    return new Response(await initResponse.text(), {
+      status: initResponse.status,
+      headers: { "content-type": initResponse.headers.get("content-type") ?? "application/json; charset=utf-8" },
+    });
   }
 
   const requestUrl = new URL(c.req.url);
@@ -118,6 +123,7 @@ async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Respon
     },
     join_secret: joinSecret,
     room_url: roomUrl,
+    board_schema: body.board_schema ?? null,
     api: {
       room: roomUrl,
       join: `${roomUrl}/participants/{participant_id}`,
