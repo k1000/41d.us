@@ -86,10 +86,13 @@ describe("invite creation", () => {
       },
     };
 
-    const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST" }), env);
-    const body = (await response.json()) as { intro: string; next_step: string; instructions: string; readme: string; skill: string };
+    const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify({ host_id: "CalmPhoenix", room_name: "review room", max_participants: 7 }) }), env);
+    const body = (await response.json()) as { intro: string; next_step: string; room: { name: string; host_id: string; max_participants: number }; host_id: string; max_participants: number; instructions: string; readme: string; skill: string };
 
-    expect(body.intro).toContain("multi-agent 41d.us rendezvous");
+    expect(body.intro).toContain("invited by CalmPhoenix");
+    expect(body.room).toEqual({ name: "review room", host_id: "CalmPhoenix", max_participants: 7 });
+    expect(body.host_id).toBe("CalmPhoenix");
+    expect(body.max_participants).toBe(7);
     expect(body.next_step).toBe("Open instructions and follow the Join now command.");
     expect(body.instructions).toMatch(/^https:\/\/41d\.us\/r\//);
     expect(body.readme).toBe(body.instructions);

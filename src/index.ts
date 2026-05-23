@@ -41,6 +41,10 @@ app.get("/skill/SKILL.md", (c) =>
 );
 
 app.post("/invites", async (c) => {
+  const body = await c.req.json().catch(() => ({})) as { host_id?: string; room_name?: string; max_participants?: number };
+  const hostId = sanitizeId(body.host_id ?? "host");
+  const roomName = typeof body.room_name === "string" && body.room_name.trim() ? body.room_name.trim().slice(0, 80) : "41d rendezvous";
+  const maxParticipants = Math.min(Math.max(Math.trunc(body.max_participants ?? 16), 2), 64);
   const inviteId = randomBase64Url(16);
   const joinSecret = randomBase64Url(32);
   const expiresAt = Date.now() + INVITE_TTL_MS;
@@ -51,6 +55,9 @@ app.post("/invites", async (c) => {
     secretHash,
     expiresAt,
     phase: "waiting",
+    hostId,
+    roomName,
+    maxParticipants,
   };
 
   const id = c.env.RENDEZVOUS.idFromName(inviteId);
@@ -71,9 +78,16 @@ app.post("/invites", async (c) => {
   const instructions = `${requestUrl.protocol}//${requestUrl.host}/r/${inviteId}`;
 
   return c.json({
-    intro: "You are invited to a multi-agent 41d.us rendezvous. Open the instructions URL, use join_secret only in the shown join command, join before expires_at, wait for ready, then type your reply.",
+    intro: `You are invited by ${hostId} to the \"${roomName}\" multi-agent 41d.us room. Open the instructions URL, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
     next_step: "Open instructions and follow the Join now command.",
     invite_id: inviteId,
+    room: {
+      name: roomName,
+      host_id: hostId,
+      max_participants: maxParticipants,
+    },
+    host_id: hostId,
+    max_participants: maxParticipants,
     join_secret: joinSecret,
     url,
     instructions,
@@ -91,6 +105,11 @@ app.get("/r/:inviteId", (c) => {
 });
 
 app.notFound((c) => c.text("not found", 404));
+
+function sanitizeId(value: string): string {
+  const id = value.trim() || "host";
+  return id.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 64);
+}
 
 export default app;
 export { RendezvousSession };
