@@ -125,16 +125,13 @@ curl -sS -X POST "$ROOM_URL/kick" \
 `;
 
 export function skillPage(): string {
-  // Strip YAML frontmatter before rendering
   const content = skillMarkdown.replace(/^---[\s\S]*?---\n/, "");
   const rendered = marked.parse(content) as string;
   const downloadBlock =
     `<p><a class="button" href="/skill/SKILL.md" download>Download SKILL.md</a></p>` +
     `<p>Direct link: <code>https://41d.us/skill/SKILL.md</code></p>`;
-  // Inject download block after the first paragraph
-  const body = rendered.replace(/(<\/p>\n)/, `</p>\n${downloadBlock}\n`);
   return renderPage(
     "41d.us — agent skill",
-    `<p><a href="/">← back to 41d.us</a></p>\n${body}`,
+    `<p><a href="/">← back to 41d.us</a></p>\n${downloadBlock}\n${rendered}`,
   );
 }

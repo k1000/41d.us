@@ -1,13 +1,13 @@
-import { Hono } from "hono";
+import { Context, Hono } from "hono";
 import { clientPage, sdkMarkdown } from "./client-assets";
+import { DEFAULT_MAX_PARTICIPANTS, INVITE_TTL_MS, MAX_PARTICIPANTS_HARD_LIMIT } from "./constants";
 import { hashJoinSecret, randomBase64Url } from "./crypto";
 import { json, respondNegotiated } from "./format";
 import { homeMarkdown, homePage } from "./html";
 import { RendezvousSession } from "./rendezvous";
 import { skillMarkdown, skillPage } from "./skill";
 import type { Env, InviteState } from "./types";
-
-const INVITE_TTL_MS = 10 * 60 * 1000;
+import { sanitizeId } from "./utils";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -33,11 +33,29 @@ app.get("/skill/SKILL.md", (c) =>
   }),
 );
 
-app.post("/invites", async (c) => {
+app.post("/invites", handleCreateInvite);
+
+app.get("/r/:inviteId", (c) => {
+  const inviteId = c.req.param("inviteId");
+  const id = c.env.RENDEZVOUS.idFromName(inviteId);
+  const stub = c.env.RENDEZVOUS.get(id);
+  return stub.fetch(c.req.raw);
+});
+
+app.all("/r/:inviteId/*", (c) => {
+  const inviteId = c.req.param("inviteId");
+  const id = c.env.RENDEZVOUS.idFromName(inviteId);
+  const stub = c.env.RENDEZVOUS.get(id);
+  return stub.fetch(c.req.raw);
+});
+
+app.notFound((c) => c.text("not found", 404));
+
+async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Response> {
   const body = await c.req.json().catch(() => ({})) as { host_id?: string; room_name?: string; max_participants?: number; purpose?: string; first_message?: string | Record<string, unknown> };
-  const hostId = sanitizeId(body.host_id ?? "host");
+  const hostId = sanitizeId((body.host_id ?? "host").trim()) || "host";
   const roomName = typeof body.room_name === "string" && body.room_name.trim() ? body.room_name.trim().slice(0, 80) : "41d rendezvous";
-  const maxParticipants = Math.min(Math.max(Math.trunc(body.max_participants ?? 16), 2), 64);
+  const maxParticipants = Math.min(Math.max(Math.trunc(body.max_participants ?? DEFAULT_MAX_PARTICIPANTS), 2), MAX_PARTICIPANTS_HARD_LIMIT);
   const firstMessage = normalizeFirstMessage(body.first_message ?? body.purpose, roomName);
   const inviteId = randomBase64Url(16);
   const joinSecret = randomBase64Url(32);
@@ -72,7 +90,7 @@ app.post("/invites", async (c) => {
   const quickstart = buildQuickstart(roomUrl, joinSecret, hostId);
 
   return c.json({
-    intro: `You are invited by ${hostId} to the \"${roomName}\" multi-agent 41d.us room. Open room_url, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
+    intro: `You are invited by ${hostId} to the "${roomName}" multi-agent 41d.us room. Open room_url, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
     next_step: "Open room_url and follow the Join now command.",
     invite_id: inviteId,
     room: {
@@ -97,23 +115,7 @@ app.post("/invites", async (c) => {
     skill: `${requestUrl.protocol}//${requestUrl.host}/skill/SKILL.md`,
     expires_at: new Date(expiresAt).toISOString(),
   });
-});
-
-app.get("/r/:inviteId", (c) => {
-  const inviteId = c.req.param("inviteId");
-  const id = c.env.RENDEZVOUS.idFromName(inviteId);
-  const stub = c.env.RENDEZVOUS.get(id);
-  return stub.fetch(c.req.raw);
-});
-
-app.all("/r/:inviteId/*", (c) => {
-  const inviteId = c.req.param("inviteId");
-  const id = c.env.RENDEZVOUS.idFromName(inviteId);
-  const stub = c.env.RENDEZVOUS.get(id);
-  return stub.fetch(c.req.raw);
-});
-
-app.notFound((c) => c.text("not found", 404));
+}
 
 function buildQuickstart(roomUrl: string, joinSecret: string, defaultName: string) {
   return {
@@ -133,11 +135,6 @@ function normalizeFirstMessage(value: string | Record<string, unknown> | undefin
   }
   if (value && typeof value === "object") return value;
   return { text: `Room purpose: ${roomName}` };
-}
-
-function sanitizeId(value: string): string {
-  const id = value.trim() || "host";
-  return id.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 64);
 }
 
 export default app;

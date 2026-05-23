@@ -1,12 +1,11 @@
+import { DEFAULT_MAX_PARTICIPANTS, MAX_BODY_BYTES, MAX_MESSAGES } from "./constants";
 import { hashJoinSecret } from "./crypto";
 import { json, respondNegotiated } from "./format";
 import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
-import type { Env, InviteState, Recipient, RoomMessage } from "./types";
+import type { Env, InviteState, Participant, Recipient, RoomMessage } from "./types";
+import { sanitizeId } from "./utils";
 
 const STATE_KEY = "invite";
-const DEFAULT_MAX_PARTICIPANTS = 16;
-const MAX_MESSAGES = 200;
-const MAX_BODY_BYTES = 16 * 1024;
 
 export class RendezvousSession {
   constructor(private readonly state: DurableObjectState, private readonly env: Env) {}
@@ -57,15 +56,38 @@ export class RendezvousSession {
     );
   }
 
+  // ── Auth helpers ──────────────────────────────────────────────
+
+  private async authenticate(request: Request, invite: InviteState): Promise<Record<string, unknown> | Response> {
+    const body = await request.json() as Record<string, unknown>;
+    const token = (body.admission_token ?? body.join_secret) as string | undefined;
+    if (!token) return json({ error: "admission_token is required" }, 401);
+    const tokenHash = await hashJoinSecret(invite.inviteId, token);
+    if (tokenHash !== invite.secretHash) return json({ error: "invalid admission_token" }, 403);
+    return body;
+  }
+
+  /**
+   * Authenticate and require a valid participant_id.
+   * Returns body + participantId, or an error Response.
+   */
+  private async authenticateParticipant(request: Request, invite: InviteState): Promise<{ body: Record<string, unknown>; participantId: string } | Response> {
+    const body = await this.authenticate(request, invite);
+    if (body instanceof Response) return body;
+    const participantId = requireParticipantId(body.participant_id);
+    if (participantId instanceof Response) return participantId;
+    return { body, participantId };
+  }
+
+  // ── Handlers ──────────────────────────────────────────────────
+
   private async handleJoin(request: Request, invite: InviteState): Promise<Response> {
-    const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string };
-    const participantResult = requireParticipantId(body.participant_id);
-    if (participantResult instanceof Response) return participantResult;
-    const participantId = participantResult;
-    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
-    if (auth) return auth;
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    const { participantId } = auth;
+
     const participants = invite.participants ?? {};
-    if (!participants[participantId] && Object.keys(participants).filter((id) => !participants[id].left_at).length >= (invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS)) {
+    if (!participants[participantId] && this.activeCount(participants) >= (invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS)) {
       return json({ error: "room is full", max_participants: invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS }, 409);
     }
     if (participants[participantId] && !participants[participantId].left_at) return json({ error: "participant_id already joined" }, 409);
@@ -77,15 +99,13 @@ export class RendezvousSession {
   }
 
   private async handleSend(request: Request, invite: InviteState): Promise<Response> {
-    const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string; to?: Recipient; body?: unknown; reply_to?: string | null; intent?: string; priority?: string };
-    const participantResult = requireParticipantId(body.participant_id);
-    if (participantResult instanceof Response) return participantResult;
-    const participantId = participantResult;
-    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
-    if (auth) return auth;
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    const { body, participantId } = auth;
+
     if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
-    if (JSON.stringify(body.body ?? {}).length > MAX_BODY_BYTES) return json({ error: "message body too large" }, 413);
-    const to = body.to ?? "all";
+    if (new TextEncoder().encode(JSON.stringify(body.body ?? {})).length > MAX_BODY_BYTES) return json({ error: "message body too large" }, 413);
+    const to: Recipient = (body.to as Recipient) ?? "all";
     if (!this.validRecipient(invite, to)) return json({ error: "recipient not joined" }, 404);
     const seq = (invite.nextSeq ?? 0) + 1;
     const message: RoomMessage = {
@@ -93,10 +113,10 @@ export class RendezvousSession {
       seq,
       from: participantId,
       to,
-      reply_to: body.reply_to ?? null,
-      intent: body.intent ?? "notify",
-      priority: body.priority ?? "normal",
-      body: body.body ?? {},
+      reply_to: (body.reply_to as string) ?? null,
+      intent: (body.intent as string) ?? "notify",
+      priority: (body.priority as string) ?? "normal",
+      body: (body.body as unknown) ?? {},
       created_at: new Date().toISOString(),
     };
     const messages = [...(invite.messages ?? []), message].slice(-MAX_MESSAGES);
@@ -105,15 +125,14 @@ export class RendezvousSession {
   }
 
   private async handleRead(request: Request, invite: InviteState): Promise<Response> {
-    const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string; after?: number; include_self?: boolean };
-    const participantResult = requireParticipantId(body.participant_id);
-    if (participantResult instanceof Response) return participantResult;
-    const participantId = participantResult;
-    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
-    if (auth) return auth;
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    const { body, participantId } = auth;
+
     if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
     const after = Number(body.after ?? 0);
-    const messages = (invite.messages ?? []).filter((msg) => msg.seq > after && (body.include_self || msg.from !== participantId) && this.visibleTo(msg, participantId));
+    const includeSelf = !!body.include_self;
+    const messages = (invite.messages ?? []).filter((msg) => msg.seq > after && (includeSelf || msg.from !== participantId) && this.visibleTo(msg, participantId));
     const participants = invite.participants ?? {};
     participants[participantId] = { ...participants[participantId], last_seen_at: new Date().toISOString() };
     await this.state.storage.put(STATE_KEY, { ...invite, participants } satisfies InviteState);
@@ -127,35 +146,26 @@ export class RendezvousSession {
   }
 
   private async handleParticipants(request: Request, invite: InviteState): Promise<Response> {
-    const body = await request.json() as { admission_token?: string; join_secret?: string };
-    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
-    if (auth) return auth;
-    return json({ room: roomInfo(invite), participants: Object.values(invite.participants ?? {}).filter((p) => !p.left_at) });
+    const auth = await this.authenticate(request, invite);
+    if (auth instanceof Response) return auth;
+    return json({ room: roomInfo(invite), participants: this.activeParticipants(invite) });
   }
 
   private async handleStatus(request: Request, invite: InviteState): Promise<Response> {
-    const body = await request.json() as { admission_token?: string; join_secret?: string };
-    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
-    if (auth) return auth;
+    const auth = await this.authenticate(request, invite);
+    if (auth instanceof Response) return auth;
     return json({
-      room: roomInfo(invite),
-      participants: Object.values(invite.participants ?? {}).filter((p) => !p.left_at),
-      message_count: invite.messages?.length ?? 0,
-      last_seq: invite.nextSeq ?? 0,
-      oldest_seq: (invite.messages ?? [])[0]?.seq ?? 0,
-      expires_at: new Date(invite.expiresAt).toISOString(),
+      ...this.buildStatus(invite),
       closed: invite.phase === "closed",
     });
   }
 
   private async handleLeave(request: Request, invite: InviteState): Promise<Response> {
-    const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string };
-    const participantResult = requireParticipantId(body.participant_id);
-    if (participantResult instanceof Response) return participantResult;
-    const participantId = participantResult;
-    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
-    if (auth) return auth;
-    const participants = invite.participants ?? {};
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    const { participantId } = auth;
+
+    const participants = { ...invite.participants };
     if (participants[participantId]) participants[participantId] = { ...participants[participantId], left_at: new Date().toISOString() };
     await this.state.storage.put(STATE_KEY, { ...invite, participants } satisfies InviteState);
     await this.maybeDeleteEmptyRoom();
@@ -163,19 +173,18 @@ export class RendezvousSession {
   }
 
   private async handleKick(request: Request, invite: InviteState): Promise<Response> {
-    const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string; target_id?: string };
-    const hostResult = requireParticipantId(body.participant_id);
-    if (hostResult instanceof Response) return hostResult;
-    const hostId = hostResult;
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    const { body, participantId: hostId } = auth;
+
     const targetResult = requireParticipantId(body.target_id);
     if (targetResult instanceof Response) return json({ error: "target_id is required" }, 400);
-    const targetId = targetResult;
-    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
-    if (auth) return auth;
+    const targetId = targetResult as string;
+
     if (hostId !== invite.hostId) return json({ error: "only host can kick participants" }, 403);
     if (targetId === invite.hostId) return json({ error: "host cannot kick themselves" }, 400);
 
-    const participants = invite.participants ?? {};
+    const participants = { ...invite.participants };
     if (!participants[targetId] || participants[targetId].left_at) return json({ error: "target participant is not active" }, 404);
     participants[targetId] = { ...participants[targetId], left_at: new Date().toISOString() };
     const updated = { ...invite, participants } satisfies InviteState;
@@ -184,22 +193,34 @@ export class RendezvousSession {
   }
 
   private async handleClose(request: Request, invite: InviteState): Promise<Response> {
-    const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string };
-    const hostResult = requireParticipantId(body.participant_id);
-    if (hostResult instanceof Response) return hostResult;
-    const hostId = hostResult;
-    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
-    if (auth) return auth;
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    const { participantId: hostId } = auth;
+
     if (hostId !== invite.hostId) return json({ error: "only host can close room" }, 403);
     await this.state.storage.put(STATE_KEY, { ...invite, phase: "closed" } satisfies InviteState);
     return json({ ok: true, closed: true });
   }
 
-  private async authorize(invite: InviteState, token: string | undefined): Promise<Response | undefined> {
-    if (!token) return json({ error: "admission_token is required" }, 401);
-    const tokenHash = await hashJoinSecret(invite.inviteId, token);
-    if (tokenHash !== invite.secretHash) return json({ error: "invalid admission_token" }, 403);
-    return undefined;
+  // ── Domain helpers ────────────────────────────────────────────
+
+  private activeCount(participants: Record<string, Participant>): number {
+    return Object.values(participants).filter((p) => !p.left_at).length;
+  }
+
+  private activeParticipants(invite: InviteState): Participant[] {
+    return Object.values(invite.participants ?? {}).filter((p) => !p.left_at);
+  }
+
+  private buildStatus(invite: InviteState) {
+    return {
+      room: roomInfo(invite),
+      participants: this.activeParticipants(invite),
+      message_count: invite.messages?.length ?? 0,
+      last_seq: invite.nextSeq ?? 0,
+      oldest_seq: (invite.messages ?? [])[0]?.seq ?? 0,
+      expires_at: new Date(invite.expiresAt).toISOString(),
+    };
   }
 
   private isJoined(invite: InviteState, participantId: string): boolean {
@@ -219,6 +240,8 @@ export class RendezvousSession {
     return message.to === participantId;
   }
 
+  // ── Storage ────────────────────────────────────────────────────
+
   private async getInvite(): Promise<InviteState | undefined> {
     return this.state.storage.get<InviteState>(STATE_KEY);
   }
@@ -237,10 +260,13 @@ export class RendezvousSession {
   private async maybeDeleteEmptyRoom(): Promise<void> {
     const invite = await this.getInvite();
     if (!invite) return;
-    const hasActiveParticipants = Object.values(invite.participants ?? {}).some((p) => !p.left_at);
-    if (!hasActiveParticipants) await this.state.storage.deleteAll();
+    if (!Object.values(invite.participants ?? {}).some((p) => !p.left_at)) {
+      await this.state.storage.deleteAll();
+    }
   }
 }
+
+// ── Module-level helpers ─────────────────────────────────────────
 
 function roomInfo(invite: InviteState) {
   return {
@@ -254,11 +280,7 @@ function roomInfo(invite: InviteState) {
 function requireParticipantId(value: unknown): string | Response {
   const id = typeof value === "string" ? value.trim() : "";
   if (!id) return json({ error: "participant_id is required" }, 400);
-  return sanitizeParticipantId(id);
-}
-
-function sanitizeParticipantId(value: string): string {
-  return value.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 64);
+  return sanitizeId(id);
 }
 
 function httpRoomUrl(request: Request): string {

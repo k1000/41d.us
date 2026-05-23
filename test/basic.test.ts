@@ -1,3 +1,4 @@
+import { MAX_BODY_BYTES } from "../src/constants";
 import { describe, expect, it } from "vitest";
 import { sdkMarkdown } from "../src/client-assets";
 import app from "../src/index";
@@ -115,6 +116,29 @@ describe("invite secret helpers", () => {
   it("hashes join secrets deterministically per invite", async () => {
     await expect(hashJoinSecret("invite", "secret")).resolves.toBe(await hashJoinSecret("invite", "secret"));
     await expect(hashJoinSecret("invite", "secret")).resolves.not.toBe(await hashJoinSecret("other", "secret"));
+  });
+});
+
+describe("byte-size helpers", () => {
+  it("MAX_BODY_BYTES is 16 KB", () => {
+    expect(MAX_BODY_BYTES).toBe(16 * 1024);
+  });
+
+  // Verify TextEncoder counts actual UTF-8 bytes, not JS string length.
+  // JSON.stringify serialises the body to a string first, so .length reflects UTF-16 code units.
+  it("TextEncoder correctly distinguishes string length from byte count", () => {
+    // A string of repeated emoji: each emoji is 2 UTF-16 code units but 4 UTF-8 bytes.
+    // JSON produces escape sequences for non-ASCII, so compare the raw string before stringify.
+    const emoji = "\ud83d\ude00\ud83d\ude00\ud83d\ude00";
+    const rawLen = emoji.length; // 6 UTF-16 code units
+    const utf8Bytes = new TextEncoder().encode(emoji).length; // 12 UTF-8 bytes (4 each)
+    expect(utf8Bytes).toBe(rawLen * 2); // UTF-8 is 2× for emoji
+  });
+
+  it("TextEncoder correctly sizes a body at the boundary", () => {
+    // Single-byte chars: n chars → n UTF-8 bytes.
+    expect(new TextEncoder().encode("x".repeat(MAX_BODY_BYTES)).length).toBe(MAX_BODY_BYTES);
+    expect(new TextEncoder().encode("x".repeat(MAX_BODY_BYTES + 1)).length).toBe(MAX_BODY_BYTES + 1);
   });
 });
 
