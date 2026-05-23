@@ -6,8 +6,18 @@ import type { Env, InviteState, Participant, Recipient, RoomMessage } from "./ty
 import { sanitizeId } from "./utils";
 
 const STATE_KEY = "invite";
+const SSE_HEARTBEAT_MS = 25_000;
+const SSE_ENCODER = new TextEncoder();
+
+interface EventSubscriber {
+  participantId: string;
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  includeSelf: boolean;
+}
 
 export class RendezvousSession {
+  private readonly eventSubscribers = new Map<string, EventSubscriber>();
+
   constructor(private readonly state: DurableObjectState, private readonly env: Env) {}
 
   async fetch(request: Request): Promise<Response> {
@@ -38,6 +48,7 @@ export class RendezvousSession {
     if (url.pathname.endsWith("/join") && request.method === "POST") return this.handleJoin(request, invite);
     if (url.pathname.endsWith("/messages") && request.method === "POST") return this.handleSend(request, invite);
     if (url.pathname.endsWith("/messages/read") && request.method === "POST") return this.handleRead(request, invite);
+    if (url.pathname.endsWith("/events") && request.method === "GET") return this.handleEvents(request, invite);
     if (url.pathname.endsWith("/participants") && request.method === "POST") return this.handleParticipants(request, invite);
     if (url.pathname.endsWith("/status") && request.method === "POST") return this.handleStatus(request, invite);
     if (url.pathname.endsWith("/kick") && request.method === "POST") return this.handleKick(request, invite);
@@ -60,11 +71,16 @@ export class RendezvousSession {
 
   private async authenticate(request: Request, invite: InviteState): Promise<Record<string, unknown> | Response> {
     const body = await request.json() as Record<string, unknown>;
-    const token = (body.admission_token ?? body.join_secret) as string | undefined;
+    const auth = await this.authorizeToken(invite, (body.admission_token ?? body.join_secret) as string | undefined);
+    if (auth) return auth;
+    return body;
+  }
+
+  private async authorizeToken(invite: InviteState, token: string | undefined): Promise<Response | undefined> {
     if (!token) return json({ error: "admission_token is required" }, 401);
     const tokenHash = await hashJoinSecret(invite.inviteId, token);
     if (tokenHash !== invite.secretHash) return json({ error: "invalid admission_token" }, 403);
-    return body;
+    return undefined;
   }
 
   /**
@@ -121,6 +137,7 @@ export class RendezvousSession {
     };
     const messages = [...(invite.messages ?? []), message].slice(-MAX_MESSAGES);
     await this.state.storage.put(STATE_KEY, { ...invite, nextSeq: seq, messages } satisfies InviteState);
+    this.notifyMessage(message, seq);
     return json({ ok: true, id: message.id, seq });
   }
 
@@ -142,6 +159,40 @@ export class RendezvousSession {
       oldest_seq: (invite.messages ?? [])[0]?.seq ?? 0,
       retention: { max_messages: MAX_MESSAGES },
       messages,
+    });
+  }
+
+  private async handleEvents(request: Request, invite: InviteState): Promise<Response> {
+    const url = new URL(request.url);
+    const token = url.searchParams.get("admission_token") ?? url.searchParams.get("join_secret") ?? undefined;
+    const auth = await this.authorizeToken(invite, token);
+    if (auth) return auth;
+    const participantResult = requireParticipantId(url.searchParams.get("participant_id"));
+    if (participantResult instanceof Response) return participantResult;
+    const participantId = participantResult;
+    if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
+    const includeSelf = url.searchParams.get("include_self") === "true";
+
+    let interval: ReturnType<typeof setInterval> | undefined;
+    let subscriberId = "";
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        subscriberId = crypto.randomUUID();
+        this.eventSubscribers.set(subscriberId, { participantId, controller, includeSelf });
+        enqueueSse(controller, "ready", { participant_id: participantId, last_seq: invite.nextSeq ?? 0 });
+        interval = setInterval(() => enqueueSse(controller, "ping", { ts: new Date().toISOString() }), SSE_HEARTBEAT_MS);
+      },
+      cancel: () => {
+        if (interval) clearInterval(interval);
+        this.eventSubscribers.delete(subscriberId);
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-store",
+      },
     });
   }
 
@@ -203,6 +254,18 @@ export class RendezvousSession {
   }
 
   // ── Domain helpers ────────────────────────────────────────────
+
+  private notifyMessage(message: RoomMessage, lastSeq: number): void {
+    for (const [id, subscriber] of this.eventSubscribers) {
+      if (!subscriber.includeSelf && message.from === subscriber.participantId) continue;
+      if (!this.visibleTo(message, subscriber.participantId)) continue;
+      try {
+        enqueueSse(subscriber.controller, "changed", { last_seq: lastSeq });
+      } catch {
+        this.eventSubscribers.delete(id);
+      }
+    }
+  }
 
   private activeCount(participants: Record<string, Participant>): number {
     return Object.values(participants).filter((p) => !p.left_at).length;
@@ -281,6 +344,10 @@ function requireParticipantId(value: unknown): string | Response {
   const id = typeof value === "string" ? value.trim() : "";
   if (!id) return json({ error: "participant_id is required" }, 400);
   return sanitizeId(id);
+}
+
+function enqueueSse(controller: ReadableStreamDefaultController<Uint8Array>, event: string, data: unknown): void {
+  controller.enqueue(SSE_ENCODER.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
 }
 
 function httpRoomUrl(request: Request): string {

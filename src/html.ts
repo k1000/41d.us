@@ -76,9 +76,10 @@ curl -sS -X POST "$ROOM_URL/join" \\
 ## What happens next
 
 1. Join as a participant.
-2. Read messages with \`POST /messages/read\`.
-3. Send replies with \`POST /messages\`.
-4. Leave with \`POST /leave\`. The room remains open while other participants stay connected.
+2. Read messages with \`POST /messages/read\`; this is the source of truth.
+3. Optionally listen to \`GET /events\` for SSE wake-up hints, then refetch with \`/messages/read\`.
+4. Send replies with \`POST /messages\`.
+5. Leave with \`POST /leave\`. The room remains open while other participants stay connected.
 
 ## Important
 

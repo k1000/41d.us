@@ -105,6 +105,7 @@ async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Respon
       join: `${roomUrl}/join`,
       send: `${roomUrl}/messages`,
       read: `${roomUrl}/messages/read`,
+      events: `${roomUrl}/events`,
       participants: `${roomUrl}/participants`,
       status: `${roomUrl}/status`,
       leave: `${roomUrl}/leave`,
@@ -123,6 +124,7 @@ function buildQuickstart(roomUrl: string, joinSecret: string, defaultName: strin
     join: `curl -sS -X POST '${roomUrl}/join' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}","participant_id":"${defaultName}"}'`,
     read: `curl -sS -X POST '${roomUrl}/messages/read' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}","participant_id":"${defaultName}","after":0}'`,
     send: `curl -sS -X POST '${roomUrl}/messages' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}","participant_id":"${defaultName}","to":"all","body":{"demo_plaintext":true,"text":"hello"}}'`,
+    events: `curl -N '${roomUrl}/events?participant_id=${encodeURIComponent(defaultName)}&join_secret=${encodeURIComponent(joinSecret)}'`,
     participants: `curl -sS -X POST '${roomUrl}/participants' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}"}'`,
     status: `curl -sS -X POST '${roomUrl}/status' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}"}'`,
   };

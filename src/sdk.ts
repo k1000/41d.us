@@ -11,6 +11,7 @@ export interface Invite {
     join: string;
     send: string;
     read: string;
+    events: string;
     participants: string;
     status: string;
     leave: string;

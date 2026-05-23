@@ -90,16 +90,18 @@ describe("invite creation", () => {
     };
 
     const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify({ host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, purpose: "Review the mailbox API." }) }), env);
-    const body = (await response.json()) as { intro: string; next_step: string; room: { name: string; host_id: string; max_participants: number; purpose?: { text?: string } }; api: { status: string; close: string }; quickstart: { join: string }; host_id?: string; max_participants?: number; room_url: string; instructions?: string; readme?: string; skill: string };
+    const body = (await response.json()) as { intro: string; next_step: string; room: { name: string; host_id: string; max_participants: number; purpose?: { text?: string } }; api: { events: string; status: string; close: string }; quickstart: { join: string; events: string }; host_id?: string; max_participants?: number; room_url: string; instructions?: string; readme?: string; skill: string };
 
     expect(body.intro).toContain("invited by CalmPhoenix");
     expect(body.room).toEqual({ name: "review room", host_id: "CalmPhoenix", max_participants: 7, purpose: { text: "Review the mailbox API." } });
     expect(body.host_id).toBeUndefined();
     expect(body.max_participants).toBeUndefined();
     expect(body.next_step).toBe("Open room_url and follow the Join now command.");
+    expect(body.api.events).toMatch(/\/events$/);
     expect(body.api.status).toMatch(/\/status$/);
     expect(body.api.close).toMatch(/\/close$/);
     expect(body.quickstart.join).toContain("curl -sS -X POST");
+    expect(body.quickstart.events).toContain("curl -N");
     expect(body.room_url).toMatch(/^https:\/\/41d\.us\/r\//);
     expect(body.instructions).toBeUndefined();
     expect(body.readme).toBeUndefined();
