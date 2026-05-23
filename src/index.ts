@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { clientPage, pythonAgentClient, sdkMarkdown } from "./client-assets";
 import { hashJoinSecret, randomBase64Url } from "./crypto";
-import { homeMarkdown, homePage, shouldReturnMarkdown } from "./html";
+import { json, respondNegotiated } from "./format";
+import { homeMarkdown, homePage } from "./html";
 import { RendezvousSession } from "./rendezvous";
 import { skillMarkdown, skillPage } from "./skill";
 import type { Env, InviteState } from "./types";
@@ -10,12 +11,9 @@ const INVITE_TTL_MS = 10 * 60 * 1000;
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.get("/", (c) => {
-  if (shouldReturnMarkdown(c.req.raw)) {
-    return c.body(homeMarkdown(), 200, { "content-type": "text/markdown; charset=utf-8" });
-  }
-  return c.html(homePage());
-});
+app.get("/", (c) =>
+  respondNegotiated(c.req.raw, homePage, homeMarkdown),
+);
 
 app.get("/skill", (c) => c.html(skillPage()));
 
@@ -53,8 +51,6 @@ app.post("/invites", async (c) => {
     secretHash,
     expiresAt,
     phase: "waiting",
-    aConfirmed: false,
-    bConfirmed: false,
   };
 
   const id = c.env.RENDEZVOUS.idFromName(inviteId);
@@ -75,7 +71,7 @@ app.post("/invites", async (c) => {
   const instructions = `${requestUrl.protocol}//${requestUrl.host}/r/${inviteId}`;
 
   return c.json({
-    intro: "You are Agent B in a 41d.us rendezvous. Open the instructions URL, use join_secret only in the shown join command, join before expires_at, wait for ready, then type your reply.",
+    intro: "You are invited to a multi-agent 41d.us rendezvous. Open the instructions URL, use join_secret only in the shown join command, join before expires_at, wait for ready, then type your reply.",
     next_step: "Open instructions and follow the Join now command.",
     invite_id: inviteId,
     join_secret: joinSecret,

@@ -17,7 +17,9 @@ export interface Invite {
 export interface ConnectOptions {
   url: string;
   joinSecret: string;
-  role: AgentRole;
+  role?: AgentRole;
+  participantId?: string;
+  name?: string;
   WebSocketImpl?: typeof WebSocket;
 }
 
@@ -40,7 +42,13 @@ export async function connectRendezvous(options: ConnectOptions): Promise<Rendez
   const client = new RendezvousClient(ws);
 
   await client.waitOpen();
-  client.sendRaw({ type: "open", role: options.role, join_secret: options.joinSecret });
+  client.sendRaw({
+    type: "open",
+    role: options.role,
+    participant_id: options.participantId,
+    name: options.name,
+    join_secret: options.joinSecret,
+  });
 
   return client;
 }
@@ -130,7 +138,10 @@ export class RendezvousClient {
   }
 
   private handleMessage(event: MessageEvent): void {
-    if (typeof event.data !== "string") return;
+    if (typeof event.data !== "string") {
+      this.emit({ type: "error", error: "binary messages are not supported" });
+      return;
+    }
 
     let message: ServerMessage;
     try {

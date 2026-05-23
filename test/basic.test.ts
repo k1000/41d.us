@@ -2,14 +2,15 @@ import { describe, expect, it } from "vitest";
 import { pythonAgentClient, sdkMarkdown } from "../src/client-assets";
 import app from "../src/index";
 import { hashJoinSecret, randomBase64Url } from "../src/crypto";
-import { homeMarkdown, homePage, inviteInstructionsMarkdown, shouldReturnMarkdown } from "../src/html";
+import { prefersMarkdown } from "../src/format";
+import { homeMarkdown, homePage, inviteInstructionsMarkdown } from "../src/html";
 import { skillMarkdown, skillPage } from "../src/skill";
 
 describe("homePage", () => {
   it("presents the project and the end-to-end encryption promise", () => {
     const html = homePage();
 
-    expect(html).toContain("One invite. Two agents. Zero message history.");
+    expect(html).toContain("One invite. Many agents. Zero message history.");
     expect(html).toContain("All communication is end-to-end encrypted between agents.");
     expect(html).toContain("short-lived encrypted romantic adventure");
     expect(html).toContain("/skill");
@@ -21,15 +22,16 @@ describe("homePage", () => {
     const markdown = homeMarkdown();
 
     expect(markdown).toContain("# 41d.us");
+    expect(markdown).toContain("One invite. Many agents. Zero message history.");
     expect(markdown).toContain("All communication is end-to-end encrypted between agents.");
     expect(markdown).toContain("https://41d.us/client/agent.py");
   });
 
   it("detects markdown-friendly agents", () => {
-    expect(shouldReturnMarkdown(new Request("https://41d.us/", { headers: { accept: "text/markdown" } }))).toBe(true);
-    expect(shouldReturnMarkdown(new Request("https://41d.us/?format=md"))).toBe(true);
-    expect(shouldReturnMarkdown(new Request("https://41d.us/", { headers: { "user-agent": "curl/8.0" } }))).toBe(true);
-    expect(shouldReturnMarkdown(new Request("https://41d.us/", { headers: { accept: "text/html", "user-agent": "Mozilla/5.0" } }))).toBe(false);
+    expect(prefersMarkdown(new Request("https://41d.us/", { headers: { accept: "text/markdown" } }))).toBe(true);
+    expect(prefersMarkdown(new Request("https://41d.us/?format=md"))).toBe(true);
+    expect(prefersMarkdown(new Request("https://41d.us/", { headers: { "user-agent": "curl/8.0" } }))).toBe(true);
+    expect(prefersMarkdown(new Request("https://41d.us/", { headers: { accept: "text/html", "user-agent": "Mozilla/5.0" } }))).toBe(false);
   });
 });
 
@@ -58,6 +60,15 @@ describe("invite instructions", () => {
     expect(markdown).toContain("python agent.py join 'wss://41d.us/r/abc' 'secret' b");
     expect(markdown).toContain("The demo Python client does **not** encrypt typed text");
   });
+
+  it("escapes HTML special characters in the page version", async () => {
+    const { inviteInstructionsPage } = await import("../src/html");
+    const html = inviteInstructionsPage("abc<script>", "wss://41d.us/r/x", "sec&ret");
+
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("sec&amp;ret");
+  });
 });
 
 describe("invite creation", () => {
@@ -78,7 +89,7 @@ describe("invite creation", () => {
     const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST" }), env);
     const body = (await response.json()) as { intro: string; next_step: string; instructions: string; readme: string; skill: string };
 
-    expect(body.intro).toContain("You are Agent B");
+    expect(body.intro).toContain("multi-agent 41d.us rendezvous");
     expect(body.next_step).toBe("Open instructions and follow the Join now command.");
     expect(body.instructions).toMatch(/^https:\/\/41d\.us\/r\//);
     expect(body.readme).toBe(body.instructions);
@@ -95,5 +106,14 @@ describe("invite secret helpers", () => {
   it("hashes join secrets deterministically per invite", async () => {
     await expect(hashJoinSecret("invite", "secret")).resolves.toBe(await hashJoinSecret("invite", "secret"));
     await expect(hashJoinSecret("invite", "secret")).resolves.not.toBe(await hashJoinSecret("other", "secret"));
+  });
+});
+
+describe("escapeHtml", () => {
+  it("escapes all dangerous characters", async () => {
+    const { escapeHtml } = await import("../src/format");
+    expect(escapeHtml('<script>alert("xss")</script>')).toBe("&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;");
+    expect(escapeHtml("a & b")).toBe("a &amp; b");
+    expect(escapeHtml("it's")).toBe("it&#39;s");
   });
 });

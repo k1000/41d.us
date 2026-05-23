@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared 41d.us demo client for Agent A and Agent B.
+"""Shared 41d.us demo client for multi-agent rooms.
 
 Requires:
   python -m pip install websockets
@@ -8,7 +8,7 @@ Usage:
   python examples/agent.py create
   python examples/agent.py join <url> <join_secret> [a|b]
 
-After both agents reach `ready`, type a line and press Enter to send it.
+After the client reaches `ready`, type a line and press Enter to send it.
 This demo labels typed text as ciphertext for protocol testing; real agents must
 encrypt before sending.
 """

@@ -1,8 +1,12 @@
 import { hashJoinSecret } from "./crypto";
-import { inviteInstructionsMarkdown, inviteInstructionsPage, shouldReturnMarkdown } from "./html";
-import type { AgentRole, ClientMessage, Env, InviteState, ServerMessage, SocketAttachment } from "./types";
+import { json, respondNegotiated } from "./format";
+import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
+import type { ClientMessage, Env, InviteState, ServerMessage, SocketAttachment } from "./types";
 
 const STATE_KEY = "invite";
+const MAX_PARTICIPANTS = 16;
+const MAX_MESSAGE_BYTES = 65_536;
+const KNOWN_MESSAGE_TYPES = new Set(["open", "handshake", "confirmed", "msg", "close"]);
 
 export class RendezvousSession {
   constructor(private readonly state: DurableObjectState, private readonly env: Env) {}
@@ -15,6 +19,8 @@ export class RendezvousSession {
       const existing = await this.getInvite();
       if (existing && existing.phase !== "closed") return json({ error: "invite already exists" }, 409);
       await this.state.storage.put(STATE_KEY, body);
+      // Schedule auto-cleanup at expiry time so unvisited invites don't persist forever.
+      await this.state.storage.setAlarm(body.expiresAt);
       return json({ ok: true });
     }
 
@@ -22,34 +28,45 @@ export class RendezvousSession {
     if (!invite) return new Response("invite not found", { status: 404 });
     if (invite.phase === "closed") return new Response("invite closed", { status: 410 });
     if (Date.now() > invite.expiresAt) {
-      await this.state.storage.deleteAll();
+      await this.cleanup();
       return new Response("invite expired", { status: 410 });
     }
 
     if (request.headers.get("Upgrade") !== "websocket") {
       const joinUrl = websocketUrl(request);
       const joinSecret = url.searchParams.get("secret") ?? undefined;
-      if (shouldReturnMarkdown(request)) {
-        return new Response(inviteInstructionsMarkdown(invite.inviteId, joinUrl, joinSecret), {
-          headers: { "content-type": "text/markdown; charset=utf-8" },
-        });
-      }
-      return new Response(inviteInstructionsPage(invite.inviteId, joinUrl, joinSecret), {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
+      return respondNegotiated(
+        request,
+        () => inviteInstructionsPage(invite.inviteId, joinUrl, joinSecret),
+        () => inviteInstructionsMarkdown(invite.inviteId, joinUrl, joinSecret),
+      );
     }
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.state.acceptWebSocket(server);
-    server.serializeAttachment({ opened: false, confirmed: false } satisfies SocketAttachment);
+    server.serializeAttachment({ opened: false } satisfies SocketAttachment);
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async alarm(): Promise<void> {
+    // Fires at invite.expiresAt — delete state if no one has joined or the room is empty.
+    const sockets = this.state.getWebSockets();
+    if (sockets.length === 0) {
+      await this.state.storage.deleteAll();
+    }
   }
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     if (typeof raw !== "string") {
       this.sendError(ws, "binary messages are not supported in v1");
+      return;
+    }
+
+    if (raw.length > MAX_MESSAGE_BYTES) {
+      this.sendError(ws, "message too large");
+      ws.close(1009, "message too large");
       return;
     }
 
@@ -59,7 +76,6 @@ export class RendezvousSession {
       return;
     }
 
-    const attachment = this.getAttachment(ws);
     const invite = await this.getInvite();
     if (!invite) {
       this.sendError(ws, "invite not found");
@@ -67,13 +83,7 @@ export class RendezvousSession {
       return;
     }
 
-    if (Date.now() > invite.expiresAt) {
-      await this.state.storage.deleteAll();
-      this.sendError(ws, "invite expired");
-      ws.close(1008, "invite expired");
-      return;
-    }
-
+    const attachment = this.getAttachment(ws);
     if (!attachment.opened) {
       if (message.type !== "open") {
         this.sendError(ws, "first message must be open");
@@ -84,33 +94,21 @@ export class RendezvousSession {
       return;
     }
 
-    if (message.type === "open") {
-      this.sendError(ws, "socket already opened");
-      return;
-    }
-
-    if (message.type === "close") {
-      ws.close(1000, "client requested close");
-      return;
-    }
-
-    if (message.type === "confirmed") {
-      await this.confirm(ws, invite);
-      return;
-    }
-
-    if (message.type === "handshake") {
-      this.relayToPeer(ws, message);
-      return;
-    }
-
-    if (message.type === "msg") {
-      const latest = await this.getInvite();
-      if (latest?.phase !== "ready") {
-        this.sendError(ws, "session is not ready");
+    switch (message.type) {
+      case "open":
+        this.sendError(ws, "socket already opened");
         return;
-      }
-      this.relayToPeer(ws, message);
+      case "close":
+        ws.close(1000, "client requested close");
+        return;
+      case "confirmed":
+        return;
+      case "handshake":
+      case "msg":
+        this.broadcast(ws, message);
+        return;
+      default:
+        this.sendError(ws, `unknown message type: ${(message as { type: string }).type}`);
     }
   }
 
@@ -123,9 +121,16 @@ export class RendezvousSession {
   }
 
   private async open(ws: WebSocket, message: Extract<ClientMessage, { type: "open" }>, invite: InviteState): Promise<void> {
-    if (message.role !== "a" && message.role !== "b") {
-      this.sendError(ws, "invalid role");
-      ws.close(1008, "invalid role");
+    if (typeof message.join_secret !== "string" || message.join_secret.length === 0) {
+      this.sendError(ws, "join_secret is required");
+      ws.close(1008, "join_secret is required");
+      return;
+    }
+
+    if (Date.now() > invite.expiresAt) {
+      await this.cleanup();
+      this.sendError(ws, "invite expired");
+      ws.close(1008, "invite expired");
       return;
     }
 
@@ -136,121 +141,70 @@ export class RendezvousSession {
       return;
     }
 
-    if (this.findSocketByRole(message.role)) {
-      this.sendError(ws, "role already connected");
-      ws.close(1008, "role already connected");
+    const openedCount = this.openedSockets().length;
+    if (openedCount >= MAX_PARTICIPANTS) {
+      this.sendError(ws, "room is full");
+      ws.close(1008, "room is full");
       return;
     }
 
-    const attachment: SocketAttachment = { role: message.role, opened: true, confirmed: false };
-    ws.serializeAttachment(attachment);
+    const participantId = message.participant_id ?? message.name ?? message.role ?? `p${openedCount + 1}`;
+    ws.serializeAttachment({ participantId, opened: true } satisfies SocketAttachment);
 
-    await this.state.storage.put(STATE_KEY, {
-      ...invite,
-      phase: "handshaking",
-      aConfirmed: message.role === "a" ? false : invite.aConfirmed,
-      bConfirmed: message.role === "b" ? false : invite.bConfirmed,
-    } satisfies InviteState);
-
-    const peer = this.findPeerSocket(message.role);
-    if (peer) {
-      this.send(ws, { type: "peer_joined" });
-      this.send(peer, { type: "peer_joined" });
-    }
-  }
-
-  private async confirm(ws: WebSocket, invite: InviteState): Promise<void> {
-    const attachment = this.getAttachment(ws);
-    if (!attachment.role) {
-      this.sendError(ws, "socket has no role");
-      return;
-    }
-
-    const current = (await this.getInvite()) ?? invite;
-    if (current.phase === "ready") return;
-
-    ws.serializeAttachment({ ...attachment, confirmed: true } satisfies SocketAttachment);
-
-    const updated: InviteState = {
-      ...current,
-      phase: "handshaking",
-      aConfirmed: attachment.role === "a" ? true : current.aConfirmed,
-      bConfirmed: attachment.role === "b" ? true : current.bConfirmed,
-    };
-
-    if (updated.aConfirmed && updated.bConfirmed && this.findSocketByRole("a") && this.findSocketByRole("b")) {
-      updated.phase = "ready";
-      await this.state.storage.put(STATE_KEY, updated);
-      for (const socket of this.state.getWebSockets()) this.send(socket, { type: "ready" });
-      return;
-    }
-
+    const updated: InviteState = { ...invite, phase: "ready" };
     await this.state.storage.put(STATE_KEY, updated);
+
+    const count = openedCount + 1;
+    this.send(ws, { type: "ready", participant_id: participantId, count });
+    this.broadcastServer(ws, { type: "peer_joined", participant_id: participantId, count });
   }
 
   private async handleDisconnect(ws: WebSocket): Promise<void> {
     const invite = await this.getInvite();
     if (!invite) return;
 
-    const attachment = this.getAttachment(ws);
-    const peer = attachment.role ? this.findPeerSocket(attachment.role) : undefined;
+    const participantId = this.getAttachment(ws).participantId;
+    const allSockets = this.state.getWebSockets();
+    const remaining = allSockets.filter((socket) => socket !== ws && this.getAttachment(socket).opened);
 
-    if (invite.phase === "ready" || invite.phase === "closed") {
-      if (peer) {
-        this.send(peer, { type: "peer_left" });
-        peer.close(1000, "peer left");
-      }
-      await this.state.storage.deleteAll();
-      return;
+    if (participantId) {
+      this.broadcastServer(ws, { type: "peer_left", participant_id: participantId, count: remaining.length });
     }
 
-    if (peer) {
-      this.send(peer, { type: "peer_left" });
-      const peerAttachment = this.getAttachment(peer);
-      peer.serializeAttachment({ ...peerAttachment, confirmed: false } satisfies SocketAttachment);
+    if (remaining.length === 0) {
+      await this.cleanup();
     }
-
-    await this.state.storage.put(STATE_KEY, {
-      ...invite,
-      phase: peer ? "handshaking" : "waiting",
-      aConfirmed: false,
-      bConfirmed: false,
-    } satisfies InviteState);
   }
 
-  private relayToPeer(ws: WebSocket, message: Exclude<ClientMessage, { type: "open" | "confirmed" | "close" }>): void {
-    const role = this.getAttachment(ws).role;
-    if (!role) {
-      this.sendError(ws, "socket has no role");
-      return;
-    }
-
-    const peer = this.findPeerSocket(role);
-    if (!peer) {
-      this.sendError(ws, "peer not connected");
+  private broadcast(ws: WebSocket, message: Exclude<ClientMessage, { type: "open" | "confirmed" | "close" }>): void {
+    const from = this.getAttachment(ws).participantId;
+    if (!from) {
+      this.sendError(ws, "socket has no participant id");
       return;
     }
 
     if (message.type === "handshake") {
-      this.send(peer, { type: "handshake", from: role, payload: message.payload });
+      this.broadcastServer(ws, { type: "handshake", from, payload: message.payload });
       return;
     }
 
-    this.send(peer, {
+    this.broadcastServer(ws, {
       type: "msg",
       id: message.id ?? crypto.randomUUID(),
-      from: role,
+      from,
       reply_to: message.reply_to ?? null,
       payload: message.payload,
     });
   }
 
-  private findPeerSocket(role: AgentRole): WebSocket | undefined {
-    return this.findSocketByRole(role === "a" ? "b" : "a");
+  private broadcastServer(sender: WebSocket, message: ServerMessage): void {
+    for (const socket of this.openedSockets()) {
+      if (socket !== sender) this.send(socket, message);
+    }
   }
 
-  private findSocketByRole(role: AgentRole): WebSocket | undefined {
-    return this.state.getWebSockets().find((socket) => this.getAttachment(socket).role === role);
+  private openedSockets(): WebSocket[] {
+    return this.state.getWebSockets().filter((socket) => this.getAttachment(socket).opened);
   }
 
   private getAttachment(ws: WebSocket): SocketAttachment {
@@ -259,6 +213,10 @@ export class RendezvousSession {
 
   private async getInvite(): Promise<InviteState | undefined> {
     return this.state.storage.get<InviteState>(STATE_KEY);
+  }
+
+  private async cleanup(): Promise<void> {
+    await this.state.storage.deleteAll();
   }
 
   private sendError(ws: WebSocket, error: string): void {
@@ -274,6 +232,7 @@ function parseMessage(raw: string): ClientMessage | undefined {
   try {
     const value = JSON.parse(raw) as Partial<ClientMessage>;
     if (!value || typeof value !== "object" || typeof value.type !== "string") return undefined;
+    if (!KNOWN_MESSAGE_TYPES.has(value.type)) return undefined;
     return value as ClientMessage;
   } catch {
     return undefined;
@@ -285,11 +244,4 @@ function websocketUrl(request: Request): string {
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.search = "";
   return url.toString();
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
 }

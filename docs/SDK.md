@@ -1,6 +1,6 @@
 # 41d.us TypeScript SDK
 
-The SDK is a tiny protocol wrapper for both Agent A and Agent B. It is one shared client, not separate A/B packages. The role is just a connection option.
+The SDK is a tiny protocol wrapper for all room participants. It is one shared client, not separate A/B packages. The old `role` option remains for compatibility; multi-participant clients should prefer unique participant names/ids.
 
 It creates invites, opens WebSockets, sends the first `open` message, waits for `ready`, and keeps the method names explicit about encryption.
 
@@ -16,7 +16,7 @@ console.log(invite.url);
 console.log(invite.join_secret); // credential: do not log in real use
 ```
 
-## Connect as either role
+## Connect
 
 ```ts
 import { connectRendezvous } from "../src/sdk";
@@ -77,4 +77,4 @@ python examples/agent.py create
 python examples/agent.py join <url> <join_secret> b
 ```
 
-After both agents reach `ready`, type a line and press Enter to send it. Use `/quit` to close.
+After the client reaches `ready`, type a line and press Enter to send it. Use `/quit` to leave.
