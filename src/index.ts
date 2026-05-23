@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { hashJoinSecret, randomBase64Url } from "./crypto";
-import { homePage } from "./html";
+import { homeMarkdown, homePage, shouldReturnMarkdown } from "./html";
 import { RendezvousSession } from "./rendezvous";
 import { skillMarkdown, skillPage } from "./skill";
 import type { Env, InviteState } from "./types";
@@ -9,7 +9,12 @@ const INVITE_TTL_MS = 10 * 60 * 1000;
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.get("/", (c) => c.html(homePage()));
+app.get("/", (c) => {
+  if (shouldReturnMarkdown(c.req.raw)) {
+    return c.body(homeMarkdown(), 200, { "content-type": "text/markdown; charset=utf-8" });
+  }
+  return c.html(homePage());
+});
 
 app.get("/skill", (c) => c.html(skillPage()));
 

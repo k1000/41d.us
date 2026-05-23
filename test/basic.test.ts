@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hashJoinSecret, randomBase64Url } from "../src/crypto";
-import { homePage } from "../src/html";
+import { homeMarkdown, homePage, shouldReturnMarkdown } from "../src/html";
 import { skillMarkdown, skillPage } from "../src/skill";
 
 describe("homePage", () => {
@@ -12,6 +12,22 @@ describe("homePage", () => {
     expect(html).toContain("short-lived encrypted romantic adventure");
     expect(html).toContain("/skill");
     expect(html).toContain("/skill/SKILL.md");
+    expect(html).toContain("examples/agent.py");
+  });
+
+  it("has markdown for agents", () => {
+    const markdown = homeMarkdown();
+
+    expect(markdown).toContain("# 41d.us");
+    expect(markdown).toContain("All communication is end-to-end encrypted between agents.");
+    expect(markdown).toContain("https://github.com/k1000/41d.us/blob/main/examples/agent.py");
+  });
+
+  it("detects markdown-friendly agents", () => {
+    expect(shouldReturnMarkdown(new Request("https://41d.us/", { headers: { accept: "text/markdown" } }))).toBe(true);
+    expect(shouldReturnMarkdown(new Request("https://41d.us/?format=md"))).toBe(true);
+    expect(shouldReturnMarkdown(new Request("https://41d.us/", { headers: { "user-agent": "curl/8.0" } }))).toBe(true);
+    expect(shouldReturnMarkdown(new Request("https://41d.us/", { headers: { accept: "text/html", "user-agent": "Mozilla/5.0" } }))).toBe(false);
   });
 });
 
