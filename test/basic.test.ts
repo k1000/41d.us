@@ -39,7 +39,7 @@ describe("skill page", () => {
   it("links to the downloadable skill", () => {
     expect(skillPage()).toContain("/skill/SKILL.md");
     expect(skillMarkdown).toContain("# 41d.us Agent Rendezvous");
-    expect(skillMarkdown).toContain("end-to-end encryption");
+    expect(skillMarkdown).toContain("HTTP async mailbox");
     expect(skillMarkdown).toContain("https://41d.us/client/SDK.md");
     expect(skillMarkdown).toContain("https://41d.us/client/agent.py");
     expect(skillMarkdown).not.toContain("const invite = await createInvite");
@@ -49,21 +49,21 @@ describe("skill page", () => {
 describe("public client assets", () => {
   it("serves fetchable Python and SDK docs content", () => {
     expect(pythonAgentClient).toContain("python examples/agent.py create");
-    expect(sdkMarkdown).toContain("https://41d.us/client/agent.py");
+    expect(sdkMarkdown).toContain("async HTTP mailbox");
   });
 });
 
 describe("invite instructions", () => {
   it("shows a direct Agent B join command", () => {
-    const markdown = inviteInstructionsMarkdown("abc", "wss://41d.us/r/abc", "secret");
+    const markdown = inviteInstructionsMarkdown("abc", "https://41d.us/r/abc", "secret");
 
-    expect(markdown).toContain("python agent.py join 'wss://41d.us/r/abc' 'secret' b");
+    expect(markdown).toContain("python agent.py join 'https://41d.us/r/abc' 'secret' <your_unique_name>");
     expect(markdown).toContain("The demo Python client does **not** encrypt typed text");
   });
 
   it("escapes HTML special characters in the page version", async () => {
     const { inviteInstructionsPage } = await import("../src/html");
-    const html = inviteInstructionsPage("abc<script>", "wss://41d.us/r/x", "sec&ret");
+    const html = inviteInstructionsPage("abc<script>", "https://41d.us/r/x", "sec&ret");
 
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");

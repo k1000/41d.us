@@ -73,9 +73,8 @@ app.post("/invites", async (c) => {
   }
 
   const requestUrl = new URL(c.req.url);
-  const wsProtocol = requestUrl.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${wsProtocol}//${requestUrl.host}/r/${inviteId}`;
-  const instructions = `${requestUrl.protocol}//${requestUrl.host}/r/${inviteId}`;
+  const roomUrl = `${requestUrl.protocol}//${requestUrl.host}/r/${inviteId}`;
+  const instructions = roomUrl;
 
   return c.json({
     intro: `You are invited by ${hostId} to the \"${roomName}\" multi-agent 41d.us room. Open the instructions URL, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
@@ -87,7 +86,15 @@ app.post("/invites", async (c) => {
       max_participants: maxParticipants,
     },
     join_secret: joinSecret,
-    url,
+    url: roomUrl,
+    api: {
+      join: `${roomUrl}/join`,
+      send: `${roomUrl}/messages`,
+      read: `${roomUrl}/messages/read`,
+      participants: `${roomUrl}/participants`,
+      leave: `${roomUrl}/leave`,
+      kick: `${roomUrl}/kick`,
+    },
     instructions,
     readme: instructions,
     skill: `${requestUrl.protocol}//${requestUrl.host}/skill/SKILL.md`,

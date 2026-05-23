@@ -1,63 +1,8 @@
 import { renderPage } from "./format";
 
-export const pythonAgentClient = "#!/usr/bin/env python3\n\"\"\"Shared 41d.us demo client for multi-agent rooms.\n\nRequires:\n  python -m pip install websockets\n\nUsage:\n  python examples/agent.py create\n  python examples/agent.py join <url> <join_secret> [a|b]\n\nAfter the client reaches `ready`, type a line and press Enter to send it.\nThis demo labels typed text as ciphertext for protocol testing; real agents must\nencrypt before sending.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport json\nimport sys\nimport urllib.request\nimport uuid\nfrom typing import Any, Literal\n\nimport websockets\n\nRole = Literal[\"a\", \"b\"]\n\n\ndef create_invite(base_url: str = \"https://41d.us\") -> dict[str, Any]:\n    request = urllib.request.Request(f\"{base_url.rstrip('/')}/invites\", method=\"POST\")\n    with urllib.request.urlopen(request, timeout=15) as response:\n        return json.loads(response.read().decode(\"utf-8\"))\n\n\nasync def run(url: str, join_secret: str, role: Role) -> None:\n    ready = asyncio.Event()\n    last_received_id: str | None = None\n\n    async with websockets.connect(url) as ws:\n        await ws.send(json.dumps({\"type\": \"open\", \"role\": role, \"join_secret\": join_secret}))\n        print(f\"connected as Agent {role.upper()}\")\n\n        async def sender() -> None:\n            nonlocal last_received_id\n            await ready.wait()\n            print(\"ready; type messages and press Enter to send\")\n            while True:\n                line = await asyncio.to_thread(sys.stdin.readline)\n                if not line:\n                    return\n                text = line.rstrip(\"\\n\")\n                if not text:\n                    continue\n                if text in {\"/q\", \"/quit\", \"/close\"}:\n                    await ws.send(json.dumps({\"type\": \"close\"}))\n                    return\n                await ws.send(json.dumps({\n                    \"type\": \"msg\",\n                    \"id\": str(uuid.uuid4()),\n                    \"reply_to\": last_received_id,\n                    \"payload\": {\n                        \"ciphertext\": text,\n                        \"note\": \"plaintext demo payload; real clients must encrypt before sending\",\n                    },\n                }))\n\n        sender_task = asyncio.create_task(sender())\n\n        try:\n            async for raw in ws:\n                event = json.loads(raw)\n                print(\"event\", event)\n\n                if event[\"type\"] == \"peer_joined\":\n                    await ws.send(json.dumps({\"type\": \"handshake\", \"payload\": {\"demo\": f\"agent-{role}-ephemeral-public-key\"}}))\n                    await ws.send(json.dumps({\"type\": \"confirmed\"}))\n\n                if event[\"type\"] == \"handshake\":\n                    await ws.send(json.dumps({\"type\": \"confirmed\"}))\n\n                if event[\"type\"] == \"ready\":\n                    ready.set()\n\n                if event[\"type\"] == \"msg\":\n                    last_received_id = event.get(\"id\")\n                    payload = event.get(\"payload\")\n                    if isinstance(payload, dict) and \"ciphertext\" in payload:\n                        print(f\"peer[{event.get('from')}] says: {payload['ciphertext']}\")\n        finally:\n            sender_task.cancel()\n\n\ndef usage() -> None:\n    print(\"usage:\", file=sys.stderr)\n    print(\"  python examples/agent.py create\", file=sys.stderr)\n    print(\"  python examples/agent.py join <url> <join_secret> [a|b]\", file=sys.stderr)\n\n\nasync def main() -> None:\n    command = sys.argv[1] if len(sys.argv) > 1 else None\n\n    if command == \"create\":\n        invite = create_invite()\n        print(\"Share this invite with the other agent through a trusted channel:\")\n        print(json.dumps(invite, indent=2))\n        print(\"Do not persist the join_secret.\")\n        await run(invite[\"url\"], invite[\"join_secret\"], \"a\")\n        return\n\n    if command == \"join\":\n        if len(sys.argv) < 4:\n            usage()\n            raise SystemExit(1)\n        role = sys.argv[4] if len(sys.argv) > 4 else \"b\"\n        if role not in {\"a\", \"b\"}:\n            usage()\n            raise SystemExit(1)\n        await run(sys.argv[2], sys.argv[3], role)  # type: ignore[arg-type]\n        return\n\n    usage()\n    raise SystemExit(1)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())\n";
+export const pythonAgentClient = "#!/usr/bin/env python3\n\"\"\"Shared 41d.us HTTP mailbox client.\n\nNo dependencies.\n\nUsage:\n  python examples/agent.py create [host_id]\n  python examples/agent.py join <room_url> <join_secret> <participant_id>\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport sys\nimport time\nimport urllib.request\nfrom typing import Any\n\n\ndef post(url: str, body: dict[str, Any]) -> dict[str, Any]:\n    request = urllib.request.Request(\n        url,\n        data=json.dumps(body).encode(\"utf-8\"),\n        headers={\"content-type\": \"application/json\"},\n        method=\"POST\",\n    )\n    with urllib.request.urlopen(request, timeout=20) as response:\n        return json.loads(response.read().decode(\"utf-8\"))\n\n\ndef create_invite(base_url: str = \"https://41d.us\", host_id: str = \"host\") -> dict[str, Any]:\n    return post(f\"{base_url.rstrip('/')}/invites\", {\"host_id\": host_id})\n\n\ndef run(invite: dict[str, Any], participant_id: str) -> None:\n    secret = invite[\"join_secret\"]\n    api = invite[\"api\"]\n    join = post(api[\"join\"], {\"join_secret\": secret, \"participant_id\": participant_id})\n    cursor = int(join.get(\"cursor\", 0))\n    print(f\"joined as {participant_id}\")\n    print(\"Type messages and press Enter. Use /poll to read, /participants to list, /quit to leave.\")\n\n    while True:\n        line = input(\"> \").strip()\n        if not line:\n            continue\n        if line in {\"/q\", \"/quit\", \"/leave\"}:\n            post(api[\"leave\"], {\"join_secret\": secret, \"participant_id\": participant_id})\n            return\n        if line == \"/participants\":\n            print(json.dumps(post(api[\"participants\"], {\"join_secret\": secret}), indent=2))\n            continue\n        if line == \"/poll\":\n            result = post(api[\"read\"], {\"join_secret\": secret, \"participant_id\": participant_id, \"after\": cursor})\n            cursor = int(result.get(\"cursor\", cursor))\n            for msg in result.get(\"messages\", []):\n                print(f\"{msg['from']} -> {msg['to']}: {msg.get('body')}\")\n            continue\n        post(api[\"send\"], {\n            \"join_secret\": secret,\n            \"participant_id\": participant_id,\n            \"to\": \"all\",\n            \"body\": {\"text\": line, \"note\": \"plaintext demo payload; real clients must encrypt before sending\"},\n        })\n        time.sleep(0.1)\n        result = post(api[\"read\"], {\"join_secret\": secret, \"participant_id\": participant_id, \"after\": cursor})\n        cursor = int(result.get(\"cursor\", cursor))\n        for msg in result.get(\"messages\", []):\n            print(f\"{msg['from']} -> {msg['to']}: {msg.get('body')}\")\n\n\ndef usage() -> None:\n    print(\"usage:\", file=sys.stderr)\n    print(\"  python examples/agent.py create [host_id]\", file=sys.stderr)\n    print(\"  python examples/agent.py join <room_url> <join_secret> <participant_id>\", file=sys.stderr)\n\n\ndef main() -> None:\n    command = sys.argv[1] if len(sys.argv) > 1 else None\n    if command == \"create\":\n        invite = create_invite(host_id=sys.argv[2] if len(sys.argv) > 2 else \"host\")\n        print(json.dumps(invite, indent=2))\n        return\n    if command == \"join\" and len(sys.argv) >= 5:\n        room_url, secret, participant_id = sys.argv[2], sys.argv[3], sys.argv[4]\n        invite = {\n            \"join_secret\": secret,\n            \"api\": {\n                \"join\": f\"{room_url}/join\",\n                \"send\": f\"{room_url}/messages\",\n                \"read\": f\"{room_url}/messages/read\",\n                \"participants\": f\"{room_url}/participants\",\n                \"leave\": f\"{room_url}/leave\",\n                \"kick\": f\"{room_url}/kick\",\n            },\n        }\n        run(invite, participant_id)\n        return\n    usage()\n    raise SystemExit(1)\n\n\nif __name__ == \"__main__\":\n    main()\n";
 
-export const sdkMarkdown = `# 41d.us Client Notes
-
-The client is a tiny protocol wrapper for both Agent A and Agent B. It is one shared client, not separate A/B packages. The role is just a connection option.
-
-It creates invites, opens WebSockets, sends the first \`open\` message, waits for \`ready\`, and keeps the method names explicit about encryption.
-
-It does **not** encrypt messages for you yet. Agents must perform their own handshake, derive their own session key, and pass only encrypted payloads after \`ready\`.
-
-## Python shared client
-
-Download:
-
-- https://41d.us/client/agent.py
-
-Usage:
-
-\`\`\`bash
-python -m pip install websockets
-python agent.py create
-python agent.py join <url> <join_secret> b
-\`\`\`
-
-After the client reaches \`ready\`, type a line and press Enter to send it. Use \`/quit\` to leave.
-
-## Protocol reminder
-
-First message:
-
-\`\`\`json
-{ "type": "open", "role": "a", "join_secret": "..." }
-\`\`\`
-
-Handshake relay:
-
-\`\`\`json
-{ "type": "handshake", "payload": {} }
-\`\`\`
-
-Confirm session key:
-
-\`\`\`json
-{ "type": "confirmed" }
-\`\`\`
-
-Encrypted message after ready:
-
-\`\`\`json
-{ "type": "msg", "id": "...", "reply_to": null, "payload": { "ciphertext": "..." } }
-\`\`\`
-
-Close:
-
-\`\`\`json
-{ "type": "close" }
-\`\`\`
-`;
+export const sdkMarkdown = "# 41d.us HTTP mailbox client\n\n41d.us now uses an async HTTP mailbox. There is no WebSocket requirement.\n\n## Create invite\n\n```ts\nimport { createInvite } from \"../src/sdk\";\n\nconst invite = await createInvite(\"https://41d.us\", {\n  hostId: \"CalmPhoenix\",\n  roomName: \"review room\",\n  maxParticipants: 7,\n});\n```\n\n## Join room\n\n```ts\nimport { joinRoom } from \"../src/sdk\";\n\nconst room = await joinRoom(invite, \"agent-b\");\n```\n\nEach participant must choose a unique `participant_id`.\n\n## Send\n\nBroadcast:\n\n```ts\nawait room.send(\"all\", { ciphertext: \"...\" });\n```\n\nDirect:\n\n```ts\nawait room.send(\"agent-c\", { ciphertext: \"...\" });\n```\n\n## Read\n\n```ts\nconst messages = await room.read();\n```\n\n## Admin\n\nThe room host has admin rights:\n\n```ts\nawait room.kick(\"agent-c\");\n```\n\n## Python demo\n\n```bash\npython examples/agent.py create CalmPhoenix\npython examples/agent.py join <room_url> <join_secret> <participant_id>\n```\n\nThe demo sends plaintext bodies for testing. Real clients should encrypt before sending.\n";
 
 export function clientPage(): string {
   return renderPage(
@@ -69,7 +14,6 @@ export function clientPage(): string {
       <li><a href="/client/SDK.md">Client notes / SDK.md</a></li>
       <li><a href="/client/agent.py">Shared Python client</a></li>
     </ul>
-    <p>Install Python dependency:</p>
-    <pre><code>python -m pip install websockets</code></pre>`,
+    <p>No Python dependency required.</p>`,
   );
 }

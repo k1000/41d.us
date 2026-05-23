@@ -1,7 +1,7 @@
 import { hashJoinSecret } from "./crypto";
 import { json, respondNegotiated } from "./format";
 import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
-import type { ClientMessage, Env, InviteState, Recipient, RoomMessage, ServerMessage, SocketAttachment } from "./types";
+import type { Env, InviteState, Recipient, RoomMessage } from "./types";
 
 const STATE_KEY = "invite";
 const DEFAULT_MAX_PARTICIPANTS = 16;
@@ -32,59 +32,16 @@ export class RendezvousSession {
     if (url.pathname.endsWith("/kick") && request.method === "POST") return this.handleKick(request, invite);
     if (url.pathname.endsWith("/leave") && request.method === "POST") return this.handleLeave(request, invite);
 
-    if (request.headers.get("Upgrade") !== "websocket") {
-      const joinUrl = websocketUrl(request);
-      return respondNegotiated(
-        request,
-        () => inviteInstructionsPage(invite.inviteId, joinUrl),
-        () => inviteInstructionsMarkdown(invite.inviteId, joinUrl),
-      );
+    if (request.headers.get("Upgrade") === "websocket") {
+      return new Response("WebSocket transport has been removed. Use the HTTP async mailbox endpoints.", { status: 410 });
     }
 
-    const pair = new WebSocketPair();
-    const [client, server] = Object.values(pair);
-    this.state.acceptWebSocket(server);
-    server.serializeAttachment({ opened: false } satisfies SocketAttachment);
-    return new Response(null, { status: 101, webSocket: client });
-  }
-
-  async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
-    if (typeof raw !== "string") return this.sendError(ws, "binary messages are not supported in v1");
-    const message = parseMessage(raw);
-    if (!message) return this.sendError(ws, "invalid json message");
-    const invite = await this.getValidInvite();
-    if (invite instanceof Response) {
-      this.sendError(ws, await invite.text());
-      ws.close(1008, "invalid invite");
-      return;
-    }
-
-    const attachment = this.getAttachment(ws);
-    if (!attachment.opened) {
-      if (message.type !== "open") {
-        this.sendError(ws, "first message must be open");
-        ws.close(1008, "first message must be open");
-        return;
-      }
-      await this.openSocket(ws, message, invite);
-      return;
-    }
-
-    if (message.type === "close") return ws.close(1000, "client requested close");
-    if (message.type === "confirmed" || message.type === "open") return;
-    if (message.type === "handshake") return this.broadcastSocket(ws, { type: "handshake", payload: message.payload });
-    if (message.type === "msg") return this.broadcastSocket(ws, message);
-  }
-
-  async webSocketClose(ws: WebSocket): Promise<void> {
-    const participantId = this.getAttachment(ws).participantId;
-    if (!participantId) return;
-    this.broadcastServer(ws, { type: "peer_left", participant_id: participantId, count: this.openedSockets().filter((s) => s !== ws).length });
-    if (this.openedSockets().filter((s) => s !== ws).length === 0) await this.maybeDeleteEmptyRoom();
-  }
-
-  async webSocketError(ws: WebSocket): Promise<void> {
-    await this.webSocketClose(ws);
+    const roomUrl = httpRoomUrl(request);
+    return respondNegotiated(
+      request,
+      () => inviteInstructionsPage(invite.inviteId, roomUrl),
+      () => inviteInstructionsMarkdown(invite.inviteId, roomUrl),
+    );
   }
 
   private async handleJoin(request: Request, invite: InviteState): Promise<Response> {
@@ -189,40 +146,7 @@ export class RendezvousSession {
     participants[targetId] = { ...participants[targetId], left_at: new Date().toISOString() };
     const updated = { ...invite, participants } satisfies InviteState;
     await this.state.storage.put(STATE_KEY, updated);
-
-    for (const socket of this.openedSockets()) {
-      if (this.getAttachment(socket).participantId === targetId) {
-        this.send(socket, { type: "error", error: "kicked by host" });
-        socket.close(1008, "kicked by host");
-      }
-    }
-
     return json({ ok: true, kicked: targetId, room: roomInfo(updated) });
-  }
-
-  private async openSocket(ws: WebSocket, message: Extract<ClientMessage, { type: "open" }>, invite: InviteState): Promise<void> {
-    const token = message.admission_token ?? message.join_secret;
-    const auth = await this.authorize(invite, token);
-    if (auth) {
-      this.sendError(ws, await auth.text());
-      ws.close(1008, "auth failed");
-      return;
-    }
-    const participantResult = requireParticipantId(message.participant_id ?? message.name);
-    if (participantResult instanceof Response) {
-      this.sendError(ws, await participantResult.text());
-      ws.close(1008, "participant_id required");
-      return;
-    }
-    const participantId = participantResult;
-    if (this.isJoined(invite, participantId) || this.openedSockets().some((socket) => this.getAttachment(socket).participantId === participantId)) {
-      this.sendError(ws, "participant_id already joined");
-      ws.close(1008, "participant_id already joined");
-      return;
-    }
-    ws.serializeAttachment({ participantId, opened: true } satisfies SocketAttachment);
-    this.send(ws, { type: "ready", participant_id: participantId, count: this.openedSockets().length });
-    this.broadcastServer(ws, { type: "peer_joined", participant_id: participantId, count: this.openedSockets().length });
   }
 
   private async authorize(invite: InviteState, token: string | undefined): Promise<Response | undefined> {
@@ -249,25 +173,6 @@ export class RendezvousSession {
     return message.to === participantId;
   }
 
-  private broadcastSocket(ws: WebSocket, message: Exclude<ClientMessage, { type: "open" | "confirmed" | "close" }>): void {
-    const from = this.getAttachment(ws).participantId;
-    if (!from) return this.sendError(ws, "socket has no participant id");
-    if (message.type === "handshake") return this.broadcastServer(ws, { type: "handshake", from, payload: message.payload });
-    this.broadcastServer(ws, { type: "msg", id: message.id ?? crypto.randomUUID(), from, reply_to: message.reply_to ?? null, body: message.body ?? message.payload ?? {} });
-  }
-
-  private broadcastServer(sender: WebSocket, message: ServerMessage): void {
-    for (const socket of this.openedSockets()) if (socket !== sender) this.send(socket, message);
-  }
-
-  private openedSockets(): WebSocket[] {
-    return this.state.getWebSockets().filter((socket) => this.getAttachment(socket).opened);
-  }
-
-  private getAttachment(ws: WebSocket): SocketAttachment {
-    return (ws.deserializeAttachment() ?? {}) as SocketAttachment;
-  }
-
   private async getInvite(): Promise<InviteState | undefined> {
     return this.state.storage.get<InviteState>(STATE_KEY);
   }
@@ -285,26 +190,8 @@ export class RendezvousSession {
   private async maybeDeleteEmptyRoom(): Promise<void> {
     const invite = await this.getInvite();
     if (!invite) return;
-    const hasActiveHttp = Object.values(invite.participants ?? {}).some((p) => !p.left_at);
-    if (!hasActiveHttp && this.openedSockets().length === 0) await this.state.storage.deleteAll();
-  }
-
-  private sendError(ws: WebSocket, error: string): void {
-    this.send(ws, { type: "error", error });
-  }
-
-  private send(ws: WebSocket, message: ServerMessage): void {
-    ws.send(JSON.stringify(message));
-  }
-}
-
-function parseMessage(raw: string): ClientMessage | undefined {
-  try {
-    const value = JSON.parse(raw) as Partial<ClientMessage>;
-    if (!value || typeof value !== "object" || typeof value.type !== "string") return undefined;
-    return value as ClientMessage;
-  } catch {
-    return undefined;
+    const hasActiveParticipants = Object.values(invite.participants ?? {}).some((p) => !p.left_at);
+    if (!hasActiveParticipants) await this.state.storage.deleteAll();
   }
 }
 
@@ -327,9 +214,9 @@ function sanitizeParticipantId(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 64);
 }
 
-function websocketUrl(request: Request): string {
+function httpRoomUrl(request: Request): string {
   const url = new URL(request.url);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.protocol = url.protocol === "https:" ? "https:" : "http:";
   url.search = "";
   return url.toString();
 }
