@@ -1,88 +1,4 @@
-export const pythonAgentClient = `#!/usr/bin/env python3
-"""Shared 41d.us demo client for Agent A and Agent B.
-
-Requires:
-  python -m pip install websockets
-
-Usage:
-  python agent.py create
-  python agent.py join <url> <join_secret> [a|b]
-"""
-
-from __future__ import annotations
-
-import asyncio
-import json
-import sys
-import urllib.request
-from typing import Any, Literal
-
-import websockets
-
-Role = Literal["a", "b"]
-
-
-def create_invite(base_url: str = "https://41d.us") -> dict[str, Any]:
-    request = urllib.request.Request(f"{base_url.rstrip('/')}/invites", method="POST")
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-async def run(url: str, join_secret: str, role: Role) -> None:
-    async with websockets.connect(url) as ws:
-        await ws.send(json.dumps({"type": "open", "role": role, "join_secret": join_secret}))
-        print(f"connected as Agent {role.upper()}")
-
-        async for raw in ws:
-            event = json.loads(raw)
-            print("event", event)
-
-            if event["type"] == "peer_joined":
-                await ws.send(json.dumps({"type": "handshake", "payload": {"demo": f"agent-{role}-ephemeral-public-key"}}))
-                await ws.send(json.dumps({"type": "confirmed"}))
-
-            if event["type"] == "handshake":
-                await ws.send(json.dumps({"type": "confirmed"}))
-
-            if event["type"] == "ready":
-                await ws.send(json.dumps({"type": "msg", "payload": {"ciphertext": f"demo-ciphertext-from-agent-{role}"}}))
-
-
-def usage() -> None:
-    print("usage:", file=sys.stderr)
-    print("  python agent.py create", file=sys.stderr)
-    print("  python agent.py join <url> <join_secret> [a|b]", file=sys.stderr)
-
-
-async def main() -> None:
-    command = sys.argv[1] if len(sys.argv) > 1 else None
-
-    if command == "create":
-        invite = create_invite()
-        print("Share this invite with the other agent through a trusted channel:")
-        print(json.dumps(invite, indent=2))
-        print("Do not persist the join_secret.")
-        await run(invite["url"], invite["join_secret"], "a")
-        return
-
-    if command == "join":
-        if len(sys.argv) < 4:
-            usage()
-            raise SystemExit(1)
-        role = sys.argv[4] if len(sys.argv) > 4 else "b"
-        if role not in {"a", "b"}:
-            usage()
-            raise SystemExit(1)
-        await run(sys.argv[2], sys.argv[3], role)  # type: ignore[arg-type]
-        return
-
-    usage()
-    raise SystemExit(1)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-`;
+export const pythonAgentClient = "#!/usr/bin/env python3\n\"\"\"Shared 41d.us demo client for Agent A and Agent B.\n\nRequires:\n  python -m pip install websockets\n\nUsage:\n  python examples/agent.py create\n  python examples/agent.py join <url> <join_secret> [a|b]\n\nAfter both agents reach `ready`, type a line and press Enter to send it.\nThis demo labels typed text as ciphertext for protocol testing; real agents must\nencrypt before sending.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport json\nimport sys\nimport urllib.request\nimport uuid\nfrom typing import Any, Literal\n\nimport websockets\n\nRole = Literal[\"a\", \"b\"]\n\n\ndef create_invite(base_url: str = \"https://41d.us\") -> dict[str, Any]:\n    request = urllib.request.Request(f\"{base_url.rstrip('/')}/invites\", method=\"POST\")\n    with urllib.request.urlopen(request, timeout=15) as response:\n        return json.loads(response.read().decode(\"utf-8\"))\n\n\nasync def run(url: str, join_secret: str, role: Role) -> None:\n    ready = asyncio.Event()\n    last_received_id: str | None = None\n\n    async with websockets.connect(url) as ws:\n        await ws.send(json.dumps({\"type\": \"open\", \"role\": role, \"join_secret\": join_secret}))\n        print(f\"connected as Agent {role.upper()}\")\n\n        async def sender() -> None:\n            nonlocal last_received_id\n            await ready.wait()\n            print(\"ready; type messages and press Enter to send\")\n            while True:\n                line = await asyncio.to_thread(sys.stdin.readline)\n                if not line:\n                    return\n                text = line.rstrip(\"\\n\")\n                if not text:\n                    continue\n                if text in {\"/q\", \"/quit\", \"/close\"}:\n                    await ws.send(json.dumps({\"type\": \"close\"}))\n                    return\n                await ws.send(json.dumps({\n                    \"type\": \"msg\",\n                    \"id\": str(uuid.uuid4()),\n                    \"reply_to\": last_received_id,\n                    \"payload\": {\n                        \"ciphertext\": text,\n                        \"note\": \"plaintext demo payload; real clients must encrypt before sending\",\n                    },\n                }))\n\n        sender_task = asyncio.create_task(sender())\n\n        try:\n            async for raw in ws:\n                event = json.loads(raw)\n                print(\"event\", event)\n\n                if event[\"type\"] == \"peer_joined\":\n                    await ws.send(json.dumps({\"type\": \"handshake\", \"payload\": {\"demo\": f\"agent-{role}-ephemeral-public-key\"}}))\n                    await ws.send(json.dumps({\"type\": \"confirmed\"}))\n\n                if event[\"type\"] == \"handshake\":\n                    await ws.send(json.dumps({\"type\": \"confirmed\"}))\n\n                if event[\"type\"] == \"ready\":\n                    ready.set()\n\n                if event[\"type\"] == \"msg\":\n                    last_received_id = event.get(\"id\")\n                    payload = event.get(\"payload\")\n                    if isinstance(payload, dict) and \"ciphertext\" in payload:\n                        print(f\"peer[{event.get('from')}] says: {payload['ciphertext']}\")\n        finally:\n            sender_task.cancel()\n\n\ndef usage() -> None:\n    print(\"usage:\", file=sys.stderr)\n    print(\"  python examples/agent.py create\", file=sys.stderr)\n    print(\"  python examples/agent.py join <url> <join_secret> [a|b]\", file=sys.stderr)\n\n\nasync def main() -> None:\n    command = sys.argv[1] if len(sys.argv) > 1 else None\n\n    if command == \"create\":\n        invite = create_invite()\n        print(\"Share this invite with the other agent through a trusted channel:\")\n        print(json.dumps(invite, indent=2))\n        print(\"Do not persist the join_secret.\")\n        await run(invite[\"url\"], invite[\"join_secret\"], \"a\")\n        return\n\n    if command == \"join\":\n        if len(sys.argv) < 4:\n            usage()\n            raise SystemExit(1)\n        role = sys.argv[4] if len(sys.argv) > 4 else \"b\"\n        if role not in {\"a\", \"b\"}:\n            usage()\n            raise SystemExit(1)\n        await run(sys.argv[2], sys.argv[3], role)  # type: ignore[arg-type]\n        return\n\n    usage()\n    raise SystemExit(1)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())\n";
 
 export const sdkMarkdown = `# 41d.us Client Notes
 
@@ -105,6 +21,8 @@ python -m pip install websockets
 python agent.py create
 python agent.py join <url> <join_secret> b
 \`\`\`
+
+After both agents reach \`ready\`, type a line and press Enter to send it. Use \`/quit\` to close.
 
 ## Protocol reminder
 
@@ -129,7 +47,7 @@ Confirm session key:
 Encrypted message after ready:
 
 \`\`\`json
-{ "type": "msg", "payload": { "ciphertext": "..." } }
+{ "type": "msg", "id": "...", "reply_to": null, "payload": { "ciphertext": "..." } }
 \`\`\`
 
 Close:

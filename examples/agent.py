@@ -7,6 +7,10 @@ Requires:
 Usage:
   python examples/agent.py create
   python examples/agent.py join <url> <join_secret> [a|b]
+
+After both agents reach `ready`, type a line and press Enter to send it.
+This demo labels typed text as ciphertext for protocol testing; real agents must
+encrypt before sending.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import asyncio
 import json
 import sys
 import urllib.request
+import uuid
 from typing import Any, Literal
 
 import websockets
@@ -29,23 +34,61 @@ def create_invite(base_url: str = "https://41d.us") -> dict[str, Any]:
 
 
 async def run(url: str, join_secret: str, role: Role) -> None:
+    ready = asyncio.Event()
+    last_received_id: str | None = None
+
     async with websockets.connect(url) as ws:
         await ws.send(json.dumps({"type": "open", "role": role, "join_secret": join_secret}))
         print(f"connected as Agent {role.upper()}")
 
-        async for raw in ws:
-            event = json.loads(raw)
-            print("event", event)
+        async def sender() -> None:
+            nonlocal last_received_id
+            await ready.wait()
+            print("ready; type messages and press Enter to send")
+            while True:
+                line = await asyncio.to_thread(sys.stdin.readline)
+                if not line:
+                    return
+                text = line.rstrip("\n")
+                if not text:
+                    continue
+                if text in {"/q", "/quit", "/close"}:
+                    await ws.send(json.dumps({"type": "close"}))
+                    return
+                await ws.send(json.dumps({
+                    "type": "msg",
+                    "id": str(uuid.uuid4()),
+                    "reply_to": last_received_id,
+                    "payload": {
+                        "ciphertext": text,
+                        "note": "plaintext demo payload; real clients must encrypt before sending",
+                    },
+                }))
 
-            if event["type"] == "peer_joined":
-                await ws.send(json.dumps({"type": "handshake", "payload": {"demo": f"agent-{role}-ephemeral-public-key"}}))
-                await ws.send(json.dumps({"type": "confirmed"}))
+        sender_task = asyncio.create_task(sender())
 
-            if event["type"] == "handshake":
-                await ws.send(json.dumps({"type": "confirmed"}))
+        try:
+            async for raw in ws:
+                event = json.loads(raw)
+                print("event", event)
 
-            if event["type"] == "ready":
-                await ws.send(json.dumps({"type": "msg", "payload": {"ciphertext": f"demo-ciphertext-from-agent-{role}"}}))
+                if event["type"] == "peer_joined":
+                    await ws.send(json.dumps({"type": "handshake", "payload": {"demo": f"agent-{role}-ephemeral-public-key"}}))
+                    await ws.send(json.dumps({"type": "confirmed"}))
+
+                if event["type"] == "handshake":
+                    await ws.send(json.dumps({"type": "confirmed"}))
+
+                if event["type"] == "ready":
+                    ready.set()
+
+                if event["type"] == "msg":
+                    last_received_id = event.get("id")
+                    payload = event.get("payload")
+                    if isinstance(payload, dict) and "ciphertext" in payload:
+                        print(f"peer[{event.get('from')}] says: {payload['ciphertext']}")
+        finally:
+            sender_task.cancel()
 
 
 def usage() -> None:

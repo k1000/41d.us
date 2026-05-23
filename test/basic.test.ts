@@ -46,7 +46,7 @@ describe("skill page", () => {
 
 describe("public client assets", () => {
   it("serves fetchable Python and SDK docs content", () => {
-    expect(pythonAgentClient).toContain("python agent.py create");
+    expect(pythonAgentClient).toContain("python examples/agent.py create");
     expect(sdkMarkdown).toContain("https://41d.us/client/agent.py");
   });
 });

@@ -1,5 +1,5 @@
 import { hashJoinSecret } from "./crypto";
-import type { ClientMessage, Env, InviteState, ServerMessage, SocketAttachment } from "./types";
+import type { AgentRole, ClientMessage, Env, InviteState, ServerMessage, SocketAttachment } from "./types";
 
 const STATE_KEY = "invite";
 
@@ -156,13 +156,16 @@ export class RendezvousSession {
       return;
     }
 
+    const current = (await this.getInvite()) ?? invite;
+    if (current.phase === "ready") return;
+
     ws.serializeAttachment({ ...attachment, confirmed: true } satisfies SocketAttachment);
 
     const updated: InviteState = {
-      ...invite,
+      ...current,
       phase: "handshaking",
-      aConfirmed: attachment.role === "a" ? true : invite.aConfirmed,
-      bConfirmed: attachment.role === "b" ? true : invite.bConfirmed,
+      aConfirmed: attachment.role === "a" ? true : current.aConfirmed,
+      bConfirmed: attachment.role === "b" ? true : current.bConfirmed,
     };
 
     if (updated.aConfirmed && updated.bConfirmed && this.findSocketByRole("a") && this.findSocketByRole("b")) {
@@ -181,19 +184,25 @@ export class RendezvousSession {
 
     const attachment = this.getAttachment(ws);
     const peer = attachment.role ? this.findPeerSocket(attachment.role) : undefined;
-    if (peer) {
-      this.send(peer, { type: "peer_left" });
-      peer.close(1000, "peer left");
-    }
 
     if (invite.phase === "ready" || invite.phase === "closed") {
+      if (peer) {
+        this.send(peer, { type: "peer_left" });
+        peer.close(1000, "peer left");
+      }
       await this.state.storage.deleteAll();
       return;
     }
 
+    if (peer) {
+      this.send(peer, { type: "peer_left" });
+      const peerAttachment = this.getAttachment(peer);
+      peer.serializeAttachment({ ...peerAttachment, confirmed: false } satisfies SocketAttachment);
+    }
+
     await this.state.storage.put(STATE_KEY, {
       ...invite,
-      phase: "waiting",
+      phase: peer ? "handshaking" : "waiting",
       aConfirmed: false,
       bConfirmed: false,
     } satisfies InviteState);
@@ -212,14 +221,25 @@ export class RendezvousSession {
       return;
     }
 
-    peer.send(JSON.stringify(message));
+    if (message.type === "handshake") {
+      this.send(peer, { type: "handshake", from: role, payload: message.payload });
+      return;
+    }
+
+    this.send(peer, {
+      type: "msg",
+      id: message.id ?? crypto.randomUUID(),
+      from: role,
+      reply_to: message.reply_to ?? null,
+      payload: message.payload,
+    });
   }
 
-  private findPeerSocket(role: "a" | "b"): WebSocket | undefined {
+  private findPeerSocket(role: AgentRole): WebSocket | undefined {
     return this.findSocketByRole(role === "a" ? "b" : "a");
   }
 
-  private findSocketByRole(role: "a" | "b"): WebSocket | undefined {
+  private findSocketByRole(role: AgentRole): WebSocket | undefined {
     return this.state.getWebSockets().find((socket) => this.getAttachment(socket).role === role);
   }
 

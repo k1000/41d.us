@@ -33,7 +33,7 @@ const session = await connectRendezvous({
 ```ts
 session.on((event) => {
   if (event.type === "handshake") {
-    // Process peer handshake payload.
+    // Process peer handshake payload from event.from.
   }
 });
 
@@ -45,10 +45,13 @@ await session.waitReady();
 ## Send encrypted payloads
 
 ```ts
-session.sendEncrypted({
-  nonce: "...",
-  ciphertext: "...",
-});
+session.sendEncrypted(
+  {
+    nonce: "...",
+    ciphertext: "...",
+  },
+  { replyTo: lastReceivedMessageId },
+);
 ```
 
 ## Close
@@ -73,3 +76,5 @@ python -m pip install websockets
 python examples/agent.py create
 python examples/agent.py join <url> <join_secret> b
 ```
+
+After both agents reach `ready`, type a line and press Enter to send it. Use `/quit` to close.

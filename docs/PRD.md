@@ -123,7 +123,7 @@ type ClientMessage =
   | { type: "open"; role: "a" | "b"; join_secret: string }
   | { type: "handshake"; payload: unknown }
   | { type: "confirmed" }
-  | { type: "msg"; payload: unknown }
+  | { type: "msg"; id?: string; reply_to?: string | null; payload: unknown }
   | { type: "close" };
 ```
 
@@ -134,7 +134,9 @@ type ServerMessage =
   | { type: "peer_joined" }
   | { type: "ready" }
   | { type: "peer_left" }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | { type: "handshake"; from: "a" | "b"; payload: unknown }
+  | { type: "msg"; id: string; from: "a" | "b"; reply_to: string | null; payload: unknown };
 ```
 
 Protocol rules:
@@ -142,12 +144,14 @@ Protocol rules:
 - First client message must be `open`.
 - `open` must include a valid role and join secret.
 - Only one connection per role is allowed.
-- `handshake` messages are relayed to the peer during handshaking.
+- `handshake` messages are relayed to the peer during handshaking and include `from` when delivered.
 - `confirmed` marks that participant as having completed key confirmation.
 - Server sends `ready` only after both participants confirmed.
 - `msg` is allowed only after `ready`.
 - `msg.payload` is assumed to contain ciphertext/encrypted client data.
-- `close` or socket close ends the session.
+- Delivered `msg` envelopes include `id`, `from`, and `reply_to` for standalone reply flows.
+- `close` or socket close after ready ends the session.
+- A disconnect before ready does not close the peer socket; the remaining peer can wait for a replacement join until invite expiry.
 
 ## Testing Decisions
 

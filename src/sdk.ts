@@ -1,4 +1,6 @@
-import type { ClientMessage, ServerMessage } from "./types";
+import type { AgentRole, ClientMessage, ServerMessage } from "./types";
+
+export type { AgentRole };
 
 export interface Invite {
   invite_id: string;
@@ -8,8 +10,6 @@ export interface Invite {
   expires_at: string;
 }
 
-export type AgentRole = "a" | "b";
-
 export interface ConnectOptions {
   url: string;
   joinSecret: string;
@@ -17,14 +17,12 @@ export interface ConnectOptions {
   WebSocketImpl?: typeof WebSocket;
 }
 
-export type RendezvousEvent =
-  | { type: "peer_joined" }
-  | { type: "ready" }
-  | { type: "peer_left" }
-  | { type: "error"; error: string }
-  | { type: "handshake"; payload: unknown }
-  | { type: "msg"; payload: unknown }
-  | { type: "closed" };
+export interface SendEncryptedOptions {
+  id?: string;
+  replyTo?: string | null;
+}
+
+export type RendezvousEvent = ServerMessage | { type: "closed" };
 
 export async function createInvite(baseUrl = "https://41d.us"): Promise<Invite> {
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/invites`, { method: "POST" });
@@ -83,8 +81,8 @@ export class RendezvousClient {
     this.sendRaw({ type: "confirmed" });
   }
 
-  sendEncrypted(payload: unknown): void {
-    this.sendRaw({ type: "msg", payload });
+  sendEncrypted(payload: unknown, options: SendEncryptedOptions = {}): void {
+    this.sendRaw({ type: "msg", id: options.id, reply_to: options.replyTo ?? null, payload });
   }
 
   close(): void {
@@ -130,9 +128,9 @@ export class RendezvousClient {
   private handleMessage(event: MessageEvent): void {
     if (typeof event.data !== "string") return;
 
-    let message: ServerMessage | Extract<ClientMessage, { type: "handshake" | "msg" }>;
+    let message: ServerMessage;
     try {
-      message = JSON.parse(event.data) as typeof message;
+      message = JSON.parse(event.data) as ServerMessage;
     } catch {
       this.emit({ type: "error", error: "invalid json from rendezvous" });
       return;
