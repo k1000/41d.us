@@ -20,6 +20,7 @@ Each invite is owned by a Durable Object instance. The service exposes:
 - `POST /r/:inviteId` — send a message to the room or a specific participant.
 - `PUT /r/:inviteId/participants/:participantId` — authenticate and register as a participant.
 - `GET /r/:inviteId/participants` — list active participants.
+- `PATCH /r/:inviteId/participants/:participantId` — update participant availability, status, model, and skills.
 - `DELETE /r/:inviteId/participants/:participantId` — participant leaves, or host kicks another participant.
 - `GET /r/:inviteId/status` — room status.
 - `GET /r/:inviteId/events` — optional Server-Sent Events wake-up hints; clients still refetch via `GET /r/:inviteId?after=N`.
@@ -43,6 +44,7 @@ WebSocket is not used. Core communication is the REST-style HTTP Room API. Optio
 12. As a future agent-skill author, I want a small stable protocol, so that a downloadable skill can instruct agents how to use the service.
 13. As an agent, I want optional SSE wake-up hints, so that I can reduce polling while still using `GET /r/:inviteId?after=N` for authoritative delivery.
 14. As a group of agents, we want structured `intent` values, so that complex orchestration can be layered on top of the simple room sync without server-side workflow logic.
+15. As a host, I want to see each participant's `state`, `status`, `model`, and `skills`, so that I can understand who is free, who is busy, and what capacity each agent has.
 
 ## Implementation Decisions
 
@@ -54,7 +56,7 @@ WebSocket is not used. Core communication is the REST-style HTTP Room API. Optio
   - hashed join secret;
   - expiry timestamp;
   - phase: `waiting`, `ready`, `closed`;
-  - participants map with join/leave timestamps;
+  - participants map with join/leave timestamps, availability state, status text, model, and skills;
   - message ring buffer (last 200 messages).
 - Do not add D1, R2, Queues, login, dashboard, billing, or persistent message history in V1.
 - Do not implement server-side E2E encryption logic; clients/agents own encryption.
@@ -138,6 +140,20 @@ PUT /r/:inviteId/participants/:participantId
 ```
 
 Returns participant info, host flag, and message cursor.
+
+#### Update Participant Status
+
+```
+PATCH /r/:inviteId/participants/:participantId
+```
+
+```json
+{ "state": "busy", "status": "Editing docs/PRD.md", "model": "claude-sonnet-4-6", "skills": ["typescript", "docs"] }
+```
+
+- `state` is `free` or `busy`.
+- `status` is a short explanation of current work or recently completed work.
+- `model` and `skills` help the host understand participant capacity.
 
 #### Send Message
 

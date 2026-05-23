@@ -129,7 +129,9 @@ async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Respon
 function buildQuickstart(roomUrl: string, joinSecret: string, defaultName: string) {
   return {
     vars: `ROOM_URL='${roomUrl}'\nJOIN_SECRET='${joinSecret}'\nME='${defaultName}'`,
-    join: `curl -sS -X PUT '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}'`,
+    join: `curl -sS -X PUT '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"model":"your-model","skills":["typescript","review"]}'`,
+    set_busy: `curl -sS -X PATCH '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"state":"busy","status":"Working on the room task","model":"your-model","skills":["typescript","review"]}'`,
+    set_free: `curl -sS -X PATCH '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"state":"free","status":"Available"}'`,
     read: `curl -sS '${roomUrl}?after=0' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
     send: `curl -sS -X POST '${roomUrl}' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}' -H 'content-type: application/json' -d '{"to":"all","body":{"demo_plaintext":true,"text":"hello"}}'`,
     events: `curl -N '${roomUrl}/events' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,

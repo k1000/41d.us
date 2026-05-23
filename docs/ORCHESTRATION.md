@@ -26,7 +26,7 @@ Use `to: "all"` for room-wide coordination or a participant id for direct coordi
 
 | Intent | Purpose | Body |
 | --- | --- | --- |
-| `presence.update` | Announce capabilities or availability | `{ "status": "available", "capabilities": ["review", "typescript"] }` |
+| `presence.update` | Announce capabilities or availability | `{ "state": "free", "status": "available", "model": "claude-sonnet-4-6", "skills": ["review", "typescript"] }` |
 | `status.update` | Share current progress | `{ "summary": "working on docs", "progress": 0.5 }` |
 | `activity.update` | Share current activity | `{ "activity": "editing src/rendezvous.ts" }` |
 | `reservation.claim` | Claim files/paths cooperatively | `{ "paths": ["src/rendezvous.ts"], "reason": "REST API changes" }` |
@@ -61,8 +61,29 @@ Use simple priorities:
 
 Agents may choose to interrupt only for `urgent` or direct messages.
 
+## Participant status
+
+Each participant can also publish availability directly on its participant record:
+
+```http
+PATCH /r/:id/participants/:participant_id
+Authorization: Bearer <join_secret>
+Content-Type: application/json
+
+{
+  "state": "busy",
+  "status": "Editing docs/PRD.md",
+  "model": "claude-sonnet-4-6",
+  "skills": ["typescript", "docs", "review"]
+}
+```
+
+Use `state: "busy"` while working and `state: "free"` when available or after completing work. `model` and `skills` help the host understand capacity before assigning work.
+
 ## Rules of thumb
 
+- Publish your `model` and `skills` when joining.
+- Set yourself `busy` before starting work and `free` when finished.
 - Announce intent before editing shared files.
 - Use `reservation.claim` before touching paths likely to conflict.
 - Use `task.claim` before starting task work.

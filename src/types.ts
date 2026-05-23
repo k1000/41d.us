@@ -18,10 +18,17 @@ export interface RoomMessage {
   created_at: string;
 }
 
+export type ParticipantState = "free" | "busy";
+
 export interface Participant {
   id: string;
   joined_at: string;
   last_seen_at: string;
+  state: ParticipantState;
+  status: string;
+  status_updated_at: string;
+  model?: string;
+  skills?: string[];
   left_at?: string;
 }
 

@@ -50,6 +50,7 @@ export class RendezvousSession {
     if (isRoomRoot(url, invite.inviteId) && request.method === "DELETE") return this.handleClose(request, invite);
 
     if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "PUT") return this.handleJoin(request, invite, pathLastSegment(url));
+    if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "PATCH") return this.handleUpdateParticipant(request, invite, pathLastSegment(url));
     if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "DELETE") return this.handleDeleteParticipant(request, invite, pathLastSegment(url));
     if (url.pathname.endsWith("/participants") && request.method === "GET") return this.handleParticipants(request, invite);
     if (url.pathname.endsWith("/status") && request.method === "GET") return this.handleStatus(request, invite);
@@ -127,7 +128,11 @@ export class RendezvousSession {
     }
     if (participants[participantId] && !participants[participantId].left_at) return json({ error: "participant_id already joined" }, 409);
     const now = new Date().toISOString();
-    participants[participantId] = { id: participantId, joined_at: now, last_seen_at: now };
+    const model = normalizeParticipantModel(auth.body.model);
+    if (model instanceof Response) return model;
+    const skills = normalizeParticipantSkills(auth.body.skills);
+    if (skills instanceof Response) return skills;
+    participants[participantId] = { id: participantId, joined_at: now, last_seen_at: now, state: "free", status: "joined", status_updated_at: now, ...(model ? { model } : {}), ...(skills ? { skills } : {}) };
     const updated = { ...invite, phase: "ready", participants } satisfies InviteState;
     await this.state.storage.put(STATE_KEY, updated);
     return json({ ok: true, room: roomInfo(updated), participant_id: participantId, is_host: participantId === invite.hostId, cursor: invite.nextSeq ?? 0, message: "Joined. Sync with GET room_url?after=N and send with POST room_url." });
@@ -234,6 +239,42 @@ export class RendezvousSession {
     if (auth instanceof Response) return auth;
     const { participantId } = auth;
     return this.leaveParticipant(invite, participantId);
+  }
+
+  private async handleUpdateParticipant(request: Request, invite: InviteState, participantIdFromPath: string): Promise<Response> {
+    const body = await this.authenticate(request, invite);
+    if (body instanceof Response) return body;
+    const participantResult = requireParticipantId(participantIdFromPath);
+    if (participantResult instanceof Response) return participantResult;
+    const participantId = participantResult as string;
+    const actorResult = requireParticipantId(body.participant_id ?? request.headers.get("x-participant-id") ?? participantId);
+    if (actorResult instanceof Response) return actorResult;
+    const actorId = actorResult as string;
+    if (actorId !== participantId && actorId !== invite.hostId) return json({ error: "only participant or host can update participant status" }, 403);
+    if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
+
+    const state = normalizeParticipantState(body.state);
+    if (state instanceof Response) return state;
+    const status = normalizeParticipantStatus(body.status);
+    if (status instanceof Response) return status;
+    const model = normalizeParticipantModel(body.model);
+    if (model instanceof Response) return model;
+    const skills = normalizeParticipantSkills(body.skills);
+    if (skills instanceof Response) return skills;
+
+    const now = new Date().toISOString();
+    const participants = { ...invite.participants };
+    participants[participantId] = {
+      ...participants[participantId],
+      state: state ?? participants[participantId].state ?? "free",
+      status: status ?? participants[participantId].status ?? "joined",
+      status_updated_at: now,
+      last_seen_at: now,
+      ...(model !== undefined ? { model } : {}),
+      ...(skills !== undefined ? { skills } : {}),
+    };
+    await this.state.storage.put(STATE_KEY, { ...invite, participants } satisfies InviteState);
+    return json({ ok: true, participant: participants[participantId] });
   }
 
   private async handleDeleteParticipant(request: Request, invite: InviteState, targetIdFromPath: string): Promise<Response> {
@@ -399,6 +440,36 @@ function roomInfo(invite: InviteState) {
     host_id: invite.hostId ?? "host",
     max_participants: invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS,
   };
+}
+
+function normalizeParticipantState(value: unknown): "free" | "busy" | undefined | Response {
+  if (value === undefined) return undefined;
+  if (value === "free" || value === "busy") return value;
+  return json({ error: "state must be 'free' or 'busy'" }, 400);
+}
+
+function normalizeParticipantStatus(value: unknown): string | undefined | Response {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return json({ error: "status must be a string" }, 400);
+  return value.trim().slice(0, 240);
+}
+
+function normalizeParticipantModel(value: unknown): string | undefined | Response {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return json({ error: "model must be a string" }, 400);
+  const model = value.trim().slice(0, 120);
+  return model || undefined;
+}
+
+function normalizeParticipantSkills(value: unknown): string[] | undefined | Response {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return json({ error: "skills must be an array of strings" }, 400);
+  const skills = value
+    .filter((skill): skill is string => typeof skill === "string")
+    .map((skill) => skill.trim().slice(0, 80))
+    .filter(Boolean)
+    .slice(0, 32);
+  return [...new Set(skills)];
 }
 
 function requireParticipantId(value: unknown): string | Response {
