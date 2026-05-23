@@ -1,3 +1,5 @@
+// ── Join-secret helpers ─────────────────────────────────────────
+
 export function randomBase64Url(byteLength: number): string {
   const bytes = new Uint8Array(byteLength);
   crypto.getRandomValues(bytes);
@@ -10,8 +12,126 @@ export async function hashJoinSecret(inviteId: string, secret: string): Promise<
   return base64Url(new Uint8Array(digest));
 }
 
+// ── E2E encryption primitives ───────────────────────────────────
+
+export interface EncryptedBody {
+  encrypted: true;
+  /** AES-GCM ciphertext (base64url). For direct messages, decrypt with shared key. */
+  ciphertext: string;
+  /** AES-GCM IV (base64url, 12 bytes). */
+  iv: string;
+  /** Wrapped message keys per recipient (base64url). Present for broadcast messages. */
+  keys?: Record<string, { encrypted_key: string; iv: string }>;
+}
+
+export function isEncryptedBody(body: unknown): body is EncryptedBody {
+  return typeof body === "object" && body !== null && (body as Record<string, unknown>).encrypted === true;
+}
+
+export async function generateECDHKeyPair(): Promise<CryptoKeyPair> {
+  return crypto.subtle.generateKey(
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    ["deriveKey"],
+  ) as Promise<CryptoKeyPair>;
+}
+
+export async function exportPublicKey(key: CryptoKey): Promise<string> {
+  const raw = await crypto.subtle.exportKey("raw", key) as ArrayBuffer;
+  return base64Url(new Uint8Array(raw));
+}
+
+export async function importPublicKey(base64url: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    "raw",
+    base64UrlToBytes(base64url),
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    [],
+  );
+}
+
+/** ECDH-derive an AES-256-GCM key. Pass own public key for a self-key usable for self-wrapping broadcast keys. */
+export async function deriveSharedKey(privateKey: CryptoKey, peerPublicKey: CryptoKey): Promise<CryptoKey> {
+  return crypto.subtle.deriveKey(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    { name: "ECDH", public: peerPublicKey } as any,
+    privateKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+export async function encryptWithKey(key: CryptoKey, plaintext: string): Promise<{ ciphertext: string; iv: string }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(plaintext);
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+  return {
+    ciphertext: base64Url(new Uint8Array(ciphertext)),
+    iv: base64Url(iv),
+  };
+}
+
+export async function decryptWithKey(key: CryptoKey, ciphertextB64: string, ivB64: string): Promise<string> {
+  const ciphertext = base64UrlToBytes(ciphertextB64);
+  const iv = base64UrlToBytes(ivB64);
+  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+  return new TextDecoder().decode(plaintext);
+}
+
+export async function generateMessageKey(): Promise<CryptoKey> {
+  return crypto.subtle.generateKey(
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt", "decrypt"],
+  ) as Promise<CryptoKey>;
+}
+
+/**
+ * Wrap (encrypt) a message key with a recipient's shared key.
+ * Returns { encrypted_key, iv } (both base64url).
+ */
+export async function wrapKeyForRecipient(messageKey: CryptoKey, sharedKey: CryptoKey): Promise<{ encrypted_key: string; iv: string }> {
+  const rawKey = await crypto.subtle.exportKey("raw", messageKey) as ArrayBuffer;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encryptedKey = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, sharedKey, rawKey);
+  return {
+    encrypted_key: base64Url(new Uint8Array(encryptedKey)),
+    iv: base64Url(iv),
+  };
+}
+
+/**
+ * Unwrap (decrypt) a wrapped message key using a shared key.
+ * Returns the AES-256-GCM key used to decrypt the message body.
+ */
+export async function unwrapKey(encryptedKeyB64: string, ivB64: string, sharedKey: CryptoKey): Promise<CryptoKey> {
+  const encryptedKey = base64UrlToBytes(encryptedKeyB64);
+  const iv = base64UrlToBytes(ivB64);
+  const rawKey = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, sharedKey, encryptedKey);
+  return crypto.subtle.importKey(
+    "raw",
+    rawKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"],
+  );
+}
+
+// ── Internal helpers ────────────────────────────────────────────
+
 function base64Url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+function base64UrlToBytes(base64url: string): Uint8Array {
+  const base64 = base64url.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = base64 + "===".slice(0, (4 - (base64.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }

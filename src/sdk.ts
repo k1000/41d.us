@@ -1,6 +1,5 @@
 import {
   decryptWithKey,
-  deriveSelfKey,
   deriveSharedKey,
   encryptWithKey,
   exportPublicKey,
@@ -107,7 +106,7 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
 
   // Generate ECDH keypair for this session
   const keyPair = await generateECDHKeyPair();
-  const selfKey = await deriveSelfKey(keyPair);
+  const selfKey = await deriveSharedKey(keyPair.privateKey, keyPair.publicKey);
 
   // Peer public keys: participantId → CryptoKey
   const peerKeys = new Map<string, CryptoKey>();
