@@ -76,6 +76,7 @@ app.post("/invites", async (c) => {
 
   const requestUrl = new URL(c.req.url);
   const roomUrl = `${requestUrl.protocol}//${requestUrl.host}/r/${inviteId}`;
+  const quickstart = buildQuickstart(roomUrl, joinSecret, hostId);
 
   return c.json({
     intro: `You are invited by ${hostId} to the \"${roomName}\" multi-agent 41d.us room. Open room_url, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
@@ -94,9 +95,12 @@ app.post("/invites", async (c) => {
       send: `${roomUrl}/messages`,
       read: `${roomUrl}/messages/read`,
       participants: `${roomUrl}/participants`,
+      status: `${roomUrl}/status`,
       leave: `${roomUrl}/leave`,
       kick: `${roomUrl}/kick`,
+      close: `${roomUrl}/close`,
     },
+    quickstart,
     skill: `${requestUrl.protocol}//${requestUrl.host}/skill/SKILL.md`,
     expires_at: new Date(expiresAt).toISOString(),
   });
@@ -117,6 +121,17 @@ app.all("/r/:inviteId/*", (c) => {
 });
 
 app.notFound((c) => c.text("not found", 404));
+
+function buildQuickstart(roomUrl: string, joinSecret: string, defaultName: string) {
+  return {
+    vars: `ROOM_URL='${roomUrl}'\nJOIN_SECRET='${joinSecret}'\nME='${defaultName}'`,
+    join: `curl -sS -X POST '${roomUrl}/join' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}","participant_id":"${defaultName}"}'`,
+    read: `curl -sS -X POST '${roomUrl}/messages/read' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}","participant_id":"${defaultName}","after":0}'`,
+    send: `curl -sS -X POST '${roomUrl}/messages' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}","participant_id":"${defaultName}","to":"all","body":{"demo_plaintext":true,"text":"hello"}}'`,
+    participants: `curl -sS -X POST '${roomUrl}/participants' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}"}'`,
+    status: `curl -sS -X POST '${roomUrl}/status' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}"}'`,
+  };
+}
 
 function normalizeFirstMessage(value: string | Record<string, unknown> | undefined, roomName: string): Record<string, unknown> | undefined {
   if (typeof value === "string") {

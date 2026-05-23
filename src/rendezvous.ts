@@ -40,7 +40,9 @@ export class RendezvousSession {
     if (url.pathname.endsWith("/messages") && request.method === "POST") return this.handleSend(request, invite);
     if (url.pathname.endsWith("/messages/read") && request.method === "POST") return this.handleRead(request, invite);
     if (url.pathname.endsWith("/participants") && request.method === "POST") return this.handleParticipants(request, invite);
+    if (url.pathname.endsWith("/status") && request.method === "POST") return this.handleStatus(request, invite);
     if (url.pathname.endsWith("/kick") && request.method === "POST") return this.handleKick(request, invite);
+    if (url.pathname.endsWith("/close") && request.method === "POST") return this.handleClose(request, invite);
     if (url.pathname.endsWith("/leave") && request.method === "POST") return this.handleLeave(request, invite);
 
     if (request.headers.get("Upgrade") === "websocket") {
@@ -115,7 +117,13 @@ export class RendezvousSession {
     const participants = invite.participants ?? {};
     participants[participantId] = { ...participants[participantId], last_seen_at: new Date().toISOString() };
     await this.state.storage.put(STATE_KEY, { ...invite, participants } satisfies InviteState);
-    return json({ participant_id: participantId, cursor: invite.nextSeq ?? 0, messages });
+    return json({
+      participant_id: participantId,
+      cursor: invite.nextSeq ?? 0,
+      oldest_seq: (invite.messages ?? [])[0]?.seq ?? 0,
+      retention: { max_messages: MAX_MESSAGES },
+      messages,
+    });
   }
 
   private async handleParticipants(request: Request, invite: InviteState): Promise<Response> {
@@ -123,6 +131,21 @@ export class RendezvousSession {
     const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
     if (auth) return auth;
     return json({ room: roomInfo(invite), participants: Object.values(invite.participants ?? {}).filter((p) => !p.left_at) });
+  }
+
+  private async handleStatus(request: Request, invite: InviteState): Promise<Response> {
+    const body = await request.json() as { admission_token?: string; join_secret?: string };
+    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
+    if (auth) return auth;
+    return json({
+      room: roomInfo(invite),
+      participants: Object.values(invite.participants ?? {}).filter((p) => !p.left_at),
+      message_count: invite.messages?.length ?? 0,
+      last_seq: invite.nextSeq ?? 0,
+      oldest_seq: (invite.messages ?? [])[0]?.seq ?? 0,
+      expires_at: new Date(invite.expiresAt).toISOString(),
+      closed: invite.phase === "closed",
+    });
   }
 
   private async handleLeave(request: Request, invite: InviteState): Promise<Response> {
@@ -160,6 +183,18 @@ export class RendezvousSession {
     return json({ ok: true, kicked: targetId, room: roomInfo(updated) });
   }
 
+  private async handleClose(request: Request, invite: InviteState): Promise<Response> {
+    const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string };
+    const hostResult = requireParticipantId(body.participant_id);
+    if (hostResult instanceof Response) return hostResult;
+    const hostId = hostResult;
+    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
+    if (auth) return auth;
+    if (hostId !== invite.hostId) return json({ error: "only host can close room" }, 403);
+    await this.state.storage.put(STATE_KEY, { ...invite, phase: "closed" } satisfies InviteState);
+    return json({ ok: true, closed: true });
+  }
+
   private async authorize(invite: InviteState, token: string | undefined): Promise<Response | undefined> {
     if (!token) return json({ error: "admission_token is required" }, 401);
     const tokenHash = await hashJoinSecret(invite.inviteId, token);
@@ -191,6 +226,7 @@ export class RendezvousSession {
   private async getValidInvite(): Promise<InviteState | Response> {
     const invite = await this.getInvite();
     if (!invite) return new Response("invite not found", { status: 404 });
+    if (invite.phase === "closed") return new Response("room closed", { status: 410 });
     if (Date.now() > invite.expiresAt) {
       await this.state.storage.deleteAll();
       return new Response("invite expired", { status: 410 });

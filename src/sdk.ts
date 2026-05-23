@@ -12,8 +12,10 @@ export interface Invite {
     send: string;
     read: string;
     participants: string;
+    status: string;
     leave: string;
     kick: string;
+    close: string;
   };
   skill: string;
   expires_at: string;
@@ -23,6 +25,7 @@ export interface CreateInviteOptions {
   hostId?: string;
   roomName?: string;
   maxParticipants?: number;
+  purpose?: string;
 }
 
 export interface RoomClient {
@@ -32,8 +35,10 @@ export interface RoomClient {
   send(to: Recipient, body: unknown, options?: { replyTo?: string | null; intent?: string; priority?: string }): Promise<{ ok: true; id: string; seq: number }>;
   read(options?: { includeSelf?: boolean }): Promise<RoomMessage[]>;
   participants(): Promise<unknown>;
+  status(): Promise<unknown>;
   leave(): Promise<void>;
   kick(targetId: string): Promise<unknown>;
+  close(): Promise<unknown>;
 }
 
 export async function createInvite(baseUrl = "https://41d.us", options: CreateInviteOptions = {}): Promise<Invite> {
@@ -44,6 +49,7 @@ export async function createInvite(baseUrl = "https://41d.us", options: CreateIn
       host_id: options.hostId,
       room_name: options.roomName,
       max_participants: options.maxParticipants,
+      purpose: options.purpose,
     }),
   });
   if (!response.ok) throw new Error(`failed to create invite: ${response.status}`);
@@ -79,11 +85,17 @@ export async function joinRoom(invite: Invite, participantId: string): Promise<R
     async participants() {
       return post(invite.api.participants, invite, {});
     },
+    async status() {
+      return post(invite.api.status, invite, {});
+    },
     async leave() {
       await post(invite.api.leave, invite, { participant_id: participantId });
     },
     async kick(targetId: string) {
       return post(invite.api.kick, invite, { participant_id: participantId, target_id: targetId });
+    },
+    async close() {
+      return post(invite.api.close, invite, { participant_id: participantId });
     },
   };
 }
