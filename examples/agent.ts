@@ -1,4 +1,4 @@
-import { createInvite, joinRoom } from "../src/sdk";
+import { createInvite, joinRoom, type Invite } from "../src/sdk";
 
 const command = process.argv[2];
 
@@ -18,19 +18,26 @@ if (command === "create") {
 
   const invite = {
     join_secret: joinSecret,
+    room_url: roomUrl,
     api: {
-      join: `${roomUrl}/join`,
-      send: `${roomUrl}/messages`,
-      read: `${roomUrl}/messages/read`,
+      board: `${roomUrl}/board`,
       participants: `${roomUrl}/participants`,
-      leave: `${roomUrl}/leave`,
-      kick: `${roomUrl}/kick`,
+      status: `${roomUrl}/status`,
     },
-  } as Awaited<ReturnType<typeof createInvite>>;
+  } as Invite;
 
   const room = await joinRoom(invite, participantId);
   console.log(`joined as ${participantId}`);
+
+  await room.announceKey();
+  console.log("key announced");
+
+  const messages = await room.read();
+  console.log(`read ${messages.length} messages`);
   console.log(await room.participants());
+
+  await room.send("all", { text: `hello from ${participantId}` });
+  console.log("sent broadcast");
 } else {
   usage();
   process.exit(1);
