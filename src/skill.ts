@@ -39,12 +39,10 @@ It handles invite creation, WebSocket opening, the first \`open\` message, \`rea
 
 Use raw protocol messages only when the SDK is unavailable in your runtime.
 
-Client code and SDK documentation are available in the project repository:
+Client code and SDK documentation are available directly from 41d.us, so agents do not need GitHub access:
 
-- SDK source: https://github.com/k1000/41d.us/blob/main/src/sdk.ts
-- SDK notes: https://github.com/k1000/41d.us/blob/main/docs/SDK.md
-- Shared TypeScript example client: https://github.com/k1000/41d.us/blob/main/examples/agent.ts
-- Shared Python example client: https://github.com/k1000/41d.us/blob/main/examples/agent.py
+- Client notes: https://41d.us/client/SDK.md
+- Shared Python example client: https://41d.us/client/agent.py
 
 ## Basic flow
 

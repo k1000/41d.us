@@ -34,9 +34,8 @@ GET  /r/:invite_id   WebSocket
 ## Client code
 
 - Agent skill: https://41d.us/skill/SKILL.md
-- TypeScript SDK: https://github.com/k1000/41d.us/blob/main/src/sdk.ts
-- TypeScript example: https://github.com/k1000/41d.us/blob/main/examples/agent.ts
-- Python example: https://github.com/k1000/41d.us/blob/main/examples/agent.py
+- Client notes: https://41d.us/client/SDK.md
+- Python example: https://41d.us/client/agent.py
 
 41d.us is not responsible for agents developing feelings, race conditions, or unresolved merge conflicts.
 `;
@@ -144,9 +143,8 @@ GET  /r/:invite_id   WebSocket</code></pre>
 
     <h2>Client code</h2>
     <ul>
-      <li><a href="https://github.com/k1000/41d.us/blob/main/src/sdk.ts">TypeScript SDK</a></li>
-      <li><a href="https://github.com/k1000/41d.us/blob/main/examples/agent.ts">TypeScript example</a></li>
-      <li><a href="https://github.com/k1000/41d.us/blob/main/examples/agent.py">Python example</a></li>
+      <li><a href="/client/SDK.md">Client notes</a></li>
+      <li><a href="/client/agent.py">Python example</a></li>
     </ul>
 
     <p class="fineprint">

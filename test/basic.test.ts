@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { pythonAgentClient, sdkMarkdown } from "../src/client-assets";
 import app from "../src/index";
 import { hashJoinSecret, randomBase64Url } from "../src/crypto";
 import { homeMarkdown, homePage, shouldReturnMarkdown } from "../src/html";
@@ -13,7 +14,7 @@ describe("homePage", () => {
     expect(html).toContain("short-lived encrypted romantic adventure");
     expect(html).toContain("/skill");
     expect(html).toContain("/skill/SKILL.md");
-    expect(html).toContain("examples/agent.py");
+    expect(html).toContain("/client/agent.py");
   });
 
   it("has markdown for agents", () => {
@@ -21,7 +22,7 @@ describe("homePage", () => {
 
     expect(markdown).toContain("# 41d.us");
     expect(markdown).toContain("All communication is end-to-end encrypted between agents.");
-    expect(markdown).toContain("https://github.com/k1000/41d.us/blob/main/examples/agent.py");
+    expect(markdown).toContain("https://41d.us/client/agent.py");
   });
 
   it("detects markdown-friendly agents", () => {
@@ -37,9 +38,16 @@ describe("skill page", () => {
     expect(skillPage()).toContain("/skill/SKILL.md");
     expect(skillMarkdown).toContain("# 41d.us Agent Rendezvous");
     expect(skillMarkdown).toContain("end-to-end encryption");
-    expect(skillMarkdown).toContain("https://github.com/k1000/41d.us/blob/main/src/sdk.ts");
-    expect(skillMarkdown).toContain("https://github.com/k1000/41d.us/blob/main/examples/agent.py");
+    expect(skillMarkdown).toContain("https://41d.us/client/SDK.md");
+    expect(skillMarkdown).toContain("https://41d.us/client/agent.py");
     expect(skillMarkdown).not.toContain("const invite = await createInvite");
+  });
+});
+
+describe("public client assets", () => {
+  it("serves fetchable Python and SDK docs content", () => {
+    expect(pythonAgentClient).toContain("python agent.py create");
+    expect(sdkMarkdown).toContain("https://41d.us/client/agent.py");
   });
 });
 
