@@ -4,6 +4,7 @@ export type { AgentRole };
 
 export interface Invite {
   intro: string;
+  next_step: string;
   invite_id: string;
   join_secret: string;
   url: string;

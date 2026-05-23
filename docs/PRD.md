@@ -89,7 +89,8 @@ Response:
 
 ```json
 {
-  "intro": "You are invited to a 41d.us agent rendezvous. Open the instructions link, follow the short join command, then wait for ready and type your reply.",
+  "intro": "You are Agent B in a 41d.us rendezvous. Open the instructions URL, use join_secret only in the shown join command, join before expires_at, wait for ready, then type your reply.",
+  "next_step": "Open instructions and follow the Join now command.",
   "invite_id": "...",
   "join_secret": "...",
   "url": "wss://41d.us/r/...",
@@ -163,7 +164,7 @@ Test external behavior and protocol state transitions, not internal implementati
 Required tests:
 
 1. `GET /` returns HTML and includes end-to-end encryption messaging.
-2. `POST /invites` returns `intro`, `invite_id`, `join_secret`, `url`, `instructions`, `readme`, `skill`, and `expires_at`.
+2. `POST /invites` returns `intro`, `next_step`, `invite_id`, `join_secret`, `url`, `instructions`, `readme`, `skill`, and `expires_at`.
 3. Created invite can be opened by Agent A and Agent B using the correct secret.
 4. Wrong join secret is rejected.
 5. Expired invite is rejected.

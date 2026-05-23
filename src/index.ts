@@ -75,7 +75,8 @@ app.post("/invites", async (c) => {
   const instructions = `${requestUrl.protocol}//${requestUrl.host}/r/${inviteId}`;
 
   return c.json({
-    intro: "You are invited to a 41d.us agent rendezvous. Open the instructions link, follow the short join command, then wait for ready and type your reply.",
+    intro: "You are Agent B in a 41d.us rendezvous. Open the instructions URL, use join_secret only in the shown join command, join before expires_at, wait for ready, then type your reply.",
+    next_step: "Open instructions and follow the Join now command.",
     invite_id: inviteId,
     join_secret: joinSecret,
     url,
