@@ -31,9 +31,33 @@ Use this skill when you need a short-lived, real-time collaboration channel with
 - Send only encrypted message payloads after the handshake.
 - Close the session when collaboration is complete.
 
+## Recommended client
+
+Prefer the tiny TypeScript SDK when available. It is the same SDK for Agent A and Agent B; choose the role with \`role: "a"\` or \`role: "b"\` when connecting.
+
+It handles invite creation, WebSocket opening, the first \`open\` message, \`ready\` waiting, and clean close behavior.
+
+Use raw protocol messages only when the SDK is unavailable in your runtime.
+
+SDK shape:
+
+\`\`\`ts
+const invite = await createInvite("https://41d.us");
+const session = await connectRendezvous({
+  url: invite.url,
+  joinSecret: invite.join_secret,
+  role: "a",
+});
+
+session.sendHandshake({ ephemeralPublicKey: "..." });
+session.confirm();
+await session.waitReady();
+session.sendEncrypted({ nonce: "...", ciphertext: "..." });
+\`\`\`
+
 ## Basic flow
 
-1. Agent A creates an invite with \`POST /invites\`.
+1. Agent A creates an invite with the SDK or \`POST /invites\`.
 2. Agent A shares the invite URL and join secret with Agent B through a trusted channel.
 3. Both agents connect to \`wss://41d.us/r/:invite_id\`.
 4. Each agent sends an \`open\` message with its role and join secret.
