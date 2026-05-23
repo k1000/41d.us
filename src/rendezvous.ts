@@ -1,8 +1,8 @@
-import { DEFAULT_MAX_PARTICIPANTS, MAX_BODY_BYTES, MAX_MESSAGES } from "./constants";
+import { DEFAULT_MAX_PARTICIPANTS, MAX_BOARD_VALUE_BYTES, MAX_BODY_BYTES, MAX_MESSAGES } from "./constants";
 import { hashJoinSecret } from "./crypto";
 import { json, respondNegotiated } from "./format";
 import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
-import type { Env, InviteState, Participant, Recipient, RoomMessage } from "./types";
+import type { BoardEntry, Env, InviteState, Participant, Recipient, RoomMessage } from "./types";
 import { sanitizeId } from "./utils";
 
 const STATE_KEY = "invite";
@@ -48,6 +48,12 @@ export class RendezvousSession {
     if (isRoomRoot(url, invite.inviteId) && request.method === "GET" && request.headers.has("authorization")) return this.handleRead(request, invite);
     if (isRoomRoot(url, invite.inviteId) && request.method === "POST") return this.handleSend(request, invite);
     if (isRoomRoot(url, invite.inviteId) && request.method === "DELETE") return this.handleClose(request, invite);
+
+    if (url.pathname.match(/\/board\/[^/]+$/) && request.method === "GET") return this.handleGetBoardKey(request, invite, pathLastSegment(url));
+    if (url.pathname.match(/\/board\/[^/]+$/) && request.method === "PUT") return this.handleSetBoardKey(request, invite, pathLastSegment(url));
+    if (url.pathname.match(/\/board\/[^/]+$/) && request.method === "DELETE") return this.handleDeleteBoardKey(request, invite, pathLastSegment(url));
+    if (url.pathname.endsWith("/board") && request.method === "GET") return this.handleGetBoard(request, invite);
+    if (url.pathname.endsWith("/board") && request.method === "PATCH") return this.handlePatchBoard(request, invite);
 
     if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "PUT") return this.handleJoin(request, invite, pathLastSegment(url));
     if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "PATCH") return this.handleUpdateParticipant(request, invite, pathLastSegment(url));
@@ -225,6 +231,71 @@ export class RendezvousSession {
     return json({ room: roomInfo(invite), participants: this.activeParticipants(invite) });
   }
 
+  private async handleGetBoard(request: Request, invite: InviteState): Promise<Response> {
+    const auth = await this.authenticate(request, invite);
+    if (auth instanceof Response) return auth;
+    return json({ room: roomInfo(invite), board: invite.board ?? {} });
+  }
+
+  private async handleGetBoardKey(request: Request, invite: InviteState, keyFromPath: string): Promise<Response> {
+    const auth = await this.authenticate(request, invite);
+    if (auth instanceof Response) return auth;
+    const key = normalizeBoardKey(keyFromPath);
+    if (key instanceof Response) return key;
+    const entry = invite.board?.[key];
+    if (!entry) return json({ error: "board key not found" }, 404);
+    return json({ key, entry });
+  }
+
+  private async handleSetBoardKey(request: Request, invite: InviteState, keyFromPath: string): Promise<Response> {
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    const { body, participantId } = auth;
+    if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
+    const key = normalizeBoardKey(keyFromPath);
+    if (key instanceof Response) return key;
+    const entryResult = makeBoardEntry(body, participantId);
+    if (entryResult instanceof Response) return entryResult;
+    const board = { ...(invite.board ?? {}), [key]: entryResult };
+    await this.state.storage.put(STATE_KEY, { ...invite, board } satisfies InviteState);
+    this.notifyBoard(key, participantId);
+    return json({ ok: true, key, entry: entryResult });
+  }
+
+  private async handlePatchBoard(request: Request, invite: InviteState): Promise<Response> {
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    const { body, participantId } = auth;
+    if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
+    const board = { ...(invite.board ?? {}) };
+    const updated: Record<string, BoardEntry> = {};
+    for (const [rawKey, value] of Object.entries(body)) {
+      const key = normalizeBoardKey(rawKey);
+      if (key instanceof Response) return key;
+      const entryResult = makeBoardEntry(value, participantId);
+      if (entryResult instanceof Response) return entryResult;
+      board[key] = entryResult;
+      updated[key] = entryResult;
+    }
+    await this.state.storage.put(STATE_KEY, { ...invite, board } satisfies InviteState);
+    this.notifyBoard(Object.keys(updated), participantId);
+    return json({ ok: true, updated, board });
+  }
+
+  private async handleDeleteBoardKey(request: Request, invite: InviteState, keyFromPath: string): Promise<Response> {
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    const { participantId } = auth;
+    if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
+    const key = normalizeBoardKey(keyFromPath);
+    if (key instanceof Response) return key;
+    const board = { ...(invite.board ?? {}) };
+    delete board[key];
+    await this.state.storage.put(STATE_KEY, { ...invite, board } satisfies InviteState);
+    this.notifyBoard(key, participantId);
+    return json({ ok: true, deleted: key });
+  }
+
   private async handleStatus(request: Request, invite: InviteState): Promise<Response> {
     const auth = await this.authenticate(request, invite);
     if (auth instanceof Response) return auth;
@@ -302,6 +373,30 @@ export class RendezvousSession {
     return this.kickParticipant(invite, hostId, targetId);
   }
 
+  private async handleExport(request: Request, invite: InviteState): Promise<Response> {
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    const { participantId } = auth;
+
+    if (participantId !== invite.hostId) return json({ error: "only host can export room" }, 403);
+
+    return json({
+      exported_at: new Date().toISOString(),
+      room: {
+        invite_id: invite.inviteId,
+        name: invite.roomName ?? "41d rendezvous",
+        host_id: invite.hostId ?? "host",
+        phase: invite.phase,
+        max_participants: invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS,
+        expires_at: new Date(invite.expiresAt).toISOString(),
+      },
+      participants: invite.participants ?? {},
+      messages: invite.messages ?? [],
+      board: invite.board ?? {},
+      first_message: invite.firstMessage ?? null,
+    });
+  }
+
   private async handleClose(request: Request, invite: InviteState): Promise<Response> {
     const auth = await this.authenticateParticipant(request, invite);
     if (auth instanceof Response) return auth;
@@ -340,6 +435,16 @@ export class RendezvousSession {
       if (!this.visibleTo(message, subscriber.participantId)) continue;
       try {
         enqueueSse(subscriber.controller, "changed", { last_seq: lastSeq });
+      } catch {
+        this.eventSubscribers.delete(id);
+      }
+    }
+  }
+
+  private notifyBoard(keys: string | string[], updatedBy: string): void {
+    for (const [id, subscriber] of this.eventSubscribers) {
+      try {
+        enqueueSse(subscriber.controller, "board", { keys: Array.isArray(keys) ? keys : [keys], updated_by: updatedBy });
       } catch {
         this.eventSubscribers.delete(id);
       }
@@ -440,6 +545,20 @@ function roomInfo(invite: InviteState) {
     host_id: invite.hostId ?? "host",
     max_participants: invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS,
   };
+}
+
+function normalizeBoardKey(value: unknown): string | Response {
+  const key = typeof value === "string" ? value.trim() : "";
+  if (!key) return json({ error: "board key is required" }, 400);
+  const normalized = sanitizeId(key).slice(0, 80);
+  if (!normalized) return json({ error: "invalid board key" }, 400);
+  return normalized;
+}
+
+function makeBoardEntry(value: unknown, updatedBy: string): BoardEntry | Response {
+  const size = new TextEncoder().encode(JSON.stringify(value ?? null)).length;
+  if (size > MAX_BOARD_VALUE_BYTES) return json({ error: "board value too large", max_bytes: MAX_BOARD_VALUE_BYTES }, 413);
+  return { value: value ?? null, updated_by: updatedBy, updated_at: new Date().toISOString() };
 }
 
 function normalizeParticipantState(value: unknown): "free" | "busy" | undefined | Response {

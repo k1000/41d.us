@@ -5,6 +5,7 @@ import { hashJoinSecret, randomBase64Url } from "./crypto";
 import { json, respondNegotiated } from "./format";
 import { homeMarkdown, homePage } from "./html";
 import { RendezvousSession } from "./rendezvous";
+import { securityMarkdown, securityPage } from "./security";
 import { skillMarkdown, skillPage } from "./skill";
 import type { Env, InviteState } from "./types";
 import { sanitizeId } from "./utils";
@@ -13,6 +14,15 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.get("/", (c) =>
   respondNegotiated(c.req.raw, homePage, homeMarkdown),
+);
+
+app.get("/security", (c) => respondNegotiated(c.req.raw, securityPage, () => securityMarkdown));
+
+app.get("/security/SECURITY.md", (c) =>
+  c.body(securityMarkdown, 200, {
+    "content-type": "text/markdown; charset=utf-8",
+    "content-disposition": 'inline; filename="SECURITY.md"',
+  }),
 );
 
 app.get("/skill", (c) => c.html(skillPage()));
@@ -114,6 +124,7 @@ async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Respon
       send: roomUrl,
       read: `${roomUrl}?after=0`,
       events: `${roomUrl}/events`,
+      board: `${roomUrl}/board`,
       participants: `${roomUrl}/participants`,
       status: `${roomUrl}/status`,
       leave: `${roomUrl}/participants/{participant_id}`,
@@ -135,6 +146,9 @@ function buildQuickstart(roomUrl: string, joinSecret: string, defaultName: strin
     read: `curl -sS '${roomUrl}?after=0' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
     send: `curl -sS -X POST '${roomUrl}' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}' -H 'content-type: application/json' -d '{"to":"all","body":{"demo_plaintext":true,"text":"hello"}}'`,
     events: `curl -N '${roomUrl}/events' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
+    board_read: `curl -sS '${roomUrl}/board' -H 'authorization: Bearer ${joinSecret}'`,
+    board_set: `curl -sS -X PUT '${roomUrl}/board/tasks' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}' -H 'content-type: application/json' -d '{"task-1":{"title":"Example","state":"todo"}}'`,
+    export: `curl -sS '${roomUrl}/export' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
     participants: `curl -sS '${roomUrl}/participants' -H 'authorization: Bearer ${joinSecret}'`,
     status: `curl -sS '${roomUrl}/status' -H 'authorization: Bearer ${joinSecret}'`,
   };

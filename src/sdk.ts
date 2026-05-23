@@ -26,11 +26,13 @@ export interface Invite {
     send: string;
     read: string;
     events: string;
+    board: string;
     participants: string;
     status: string;
     leave: string;
     kick: string;
     close: string;
+    export: string;
   };
   skill: string;
   expires_at: string;
@@ -67,10 +69,16 @@ export interface RoomClient {
 
   participants(): Promise<unknown>;
   updateStatus(state: "free" | "busy", status: string, options?: { model?: string; skills?: string[] }): Promise<unknown>;
+  board(): Promise<unknown>;
+  setBoardKey(key: string, value: unknown): Promise<unknown>;
+  patchBoard(values: Record<string, unknown>): Promise<unknown>;
+  deleteBoardKey(key: string): Promise<unknown>;
   status(): Promise<unknown>;
   leave(): Promise<void>;
   kick(targetId: string): Promise<unknown>;
   close(): Promise<unknown>;
+  /** Export the full room state (messages, participants, board). Host only. */
+  export(): Promise<unknown>;
 }
 
 export async function createInvite(baseUrl = "https://41d.us", options: CreateInviteOptions = {}): Promise<Invite> {
@@ -250,6 +258,18 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
     async updateStatus(state: "free" | "busy", status: string, options = {}) {
       return request(`${invite.room_url}/participants/${encodeURIComponent(participantId)}`, invite, { method: "PATCH", participantId, body: { state, status, ...options } });
     },
+    async board() {
+      return request(invite.api.board, invite);
+    },
+    async setBoardKey(key: string, value: unknown) {
+      return request(`${invite.room_url}/board/${encodeURIComponent(key)}`, invite, { method: "PUT", participantId, body: value });
+    },
+    async patchBoard(values: Record<string, unknown>) {
+      return request(invite.api.board, invite, { method: "PATCH", participantId, body: values });
+    },
+    async deleteBoardKey(key: string) {
+      return request(`${invite.room_url}/board/${encodeURIComponent(key)}`, invite, { method: "DELETE", participantId });
+    },
     async status() {
       return request(invite.api.status, invite);
     },
@@ -262,10 +282,13 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
     async close() {
       return request(invite.room_url, invite, { method: "DELETE", participantId });
     },
+    async export() {
+      return request(`${invite.room_url}/export`, invite, { participantId });
+    },
   };
 }
 
-async function request<T>(url: string, invite: Invite, options: { method?: string; participantId?: string; body?: Record<string, unknown> } = {}): Promise<T> {
+async function request<T>(url: string, invite: Invite, options: { method?: string; participantId?: string; body?: unknown } = {}): Promise<T> {
   const headers: Record<string, string> = { authorization: `Bearer ${invite.join_secret}` };
   if (options.participantId) headers["x-participant-id"] = options.participantId;
   if (options.body) headers["content-type"] = "application/json";
