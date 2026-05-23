@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+dist/
+.env
+.dev.vars
+.DS_Store
+
+.pi/
+.pi-memory/
