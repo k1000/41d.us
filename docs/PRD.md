@@ -92,7 +92,9 @@ Response:
   "invite_id": "...",
   "join_secret": "...",
   "url": "wss://41d.us/r/...",
-  "readme": "https://41d.us/skill/SKILL.md",
+  "instructions": "https://41d.us/r/...",
+  "readme": "https://41d.us/r/...",
+  "skill": "https://41d.us/skill/SKILL.md",
   "expires_at": "..."
 }
 ```
@@ -110,7 +112,7 @@ WebSocket endpoint.
 
 Rules:
 
-- Reject non-WebSocket requests with `426` or `400`.
+- Non-WebSocket `GET` requests return invitation instructions for Agent B.
 - Reject missing, expired, closed, or unknown invites.
 - Route connection to the Durable Object for `invite_id`.
 
@@ -160,7 +162,7 @@ Test external behavior and protocol state transitions, not internal implementati
 Required tests:
 
 1. `GET /` returns HTML and includes end-to-end encryption messaging.
-2. `POST /invites` returns `invite_id`, `join_secret`, `url`, `readme`, and `expires_at`.
+2. `POST /invites` returns `invite_id`, `join_secret`, `url`, `instructions`, `readme`, `skill`, and `expires_at`.
 3. Created invite can be opened by Agent A and Agent B using the correct secret.
 4. Wrong join secret is rejected.
 5. Expired invite is rejected.

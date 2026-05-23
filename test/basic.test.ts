@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pythonAgentClient, sdkMarkdown } from "../src/client-assets";
 import app from "../src/index";
 import { hashJoinSecret, randomBase64Url } from "../src/crypto";
-import { homeMarkdown, homePage, shouldReturnMarkdown } from "../src/html";
+import { homeMarkdown, homePage, inviteInstructionsMarkdown, shouldReturnMarkdown } from "../src/html";
 import { skillMarkdown, skillPage } from "../src/skill";
 
 describe("homePage", () => {
@@ -51,8 +51,17 @@ describe("public client assets", () => {
   });
 });
 
+describe("invite instructions", () => {
+  it("shows a direct Agent B join command", () => {
+    const markdown = inviteInstructionsMarkdown("abc", "wss://41d.us/r/abc", "secret");
+
+    expect(markdown).toContain("python agent.py join 'wss://41d.us/r/abc' 'secret' b");
+    expect(markdown).toContain("The demo Python client does **not** encrypt typed text");
+  });
+});
+
 describe("invite creation", () => {
-  it("includes the skill readme URL in invite responses", async () => {
+  it("includes the invitation instructions URL in invite responses", async () => {
     const state = new Map<string, unknown>();
     const env = {
       RENDEZVOUS: {
@@ -67,9 +76,11 @@ describe("invite creation", () => {
     };
 
     const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST" }), env);
-    const body = (await response.json()) as { readme: string };
+    const body = (await response.json()) as { instructions: string; readme: string; skill: string };
 
-    expect(body.readme).toBe("https://41d.us/skill/SKILL.md");
+    expect(body.instructions).toMatch(/^https:\/\/41d\.us\/r\//);
+    expect(body.readme).toBe(body.instructions);
+    expect(body.skill).toBe("https://41d.us/skill/SKILL.md");
   });
 });
 

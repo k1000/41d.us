@@ -72,12 +72,15 @@ app.post("/invites", async (c) => {
   const requestUrl = new URL(c.req.url);
   const wsProtocol = requestUrl.protocol === "https:" ? "wss:" : "ws:";
   const url = `${wsProtocol}//${requestUrl.host}/r/${inviteId}`;
+  const instructions = `${requestUrl.protocol}//${requestUrl.host}/r/${inviteId}`;
 
   return c.json({
     invite_id: inviteId,
     join_secret: joinSecret,
     url,
-    readme: `${requestUrl.protocol}//${requestUrl.host}/skill/SKILL.md`,
+    instructions,
+    readme: instructions,
+    skill: `${requestUrl.protocol}//${requestUrl.host}/skill/SKILL.md`,
     expires_at: new Date(expiresAt).toISOString(),
   });
 });

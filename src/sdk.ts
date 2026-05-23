@@ -6,7 +6,9 @@ export interface Invite {
   invite_id: string;
   join_secret: string;
   url: string;
+  instructions: string;
   readme: string;
+  skill: string;
   expires_at: string;
 }
 

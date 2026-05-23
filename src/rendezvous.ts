@@ -1,4 +1,5 @@
 import { hashJoinSecret } from "./crypto";
+import { inviteInstructionsMarkdown, inviteInstructionsPage, shouldReturnMarkdown } from "./html";
 import type { AgentRole, ClientMessage, Env, InviteState, ServerMessage, SocketAttachment } from "./types";
 
 const STATE_KEY = "invite";
@@ -26,7 +27,16 @@ export class RendezvousSession {
     }
 
     if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("expected WebSocket", { status: 426 });
+      const joinUrl = websocketUrl(request);
+      const joinSecret = url.searchParams.get("secret") ?? undefined;
+      if (shouldReturnMarkdown(request)) {
+        return new Response(inviteInstructionsMarkdown(invite.inviteId, joinUrl, joinSecret), {
+          headers: { "content-type": "text/markdown; charset=utf-8" },
+        });
+      }
+      return new Response(inviteInstructionsPage(invite.inviteId, joinUrl, joinSecret), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
     }
 
     const pair = new WebSocketPair();
@@ -268,6 +278,13 @@ function parseMessage(raw: string): ClientMessage | undefined {
   } catch {
     return undefined;
   }
+}
+
+function websocketUrl(request: Request): string {
+  const url = new URL(request.url);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.search = "";
+  return url.toString();
 }
 
 function json(body: unknown, status = 200): Response {
