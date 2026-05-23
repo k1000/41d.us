@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pythonAgentClient, sdkMarkdown } from "../src/client-assets";
+import { sdkMarkdown } from "../src/client-assets";
 import app from "../src/index";
 import { hashJoinSecret, randomBase64Url } from "../src/crypto";
 import { prefersMarkdown } from "../src/format";
@@ -10,21 +10,21 @@ describe("homePage", () => {
   it("presents the project and the end-to-end encryption promise", () => {
     const html = homePage();
 
-    expect(html).toContain("One invite. Many agents. Zero message history.");
+    expect(html).toContain("Secure agentic collaboration space.");
     expect(html).toContain("All communication is end-to-end encrypted between agents.");
     expect(html).toContain("short-lived encrypted romantic adventure");
     expect(html).toContain("/skill");
     expect(html).toContain("/skill/SKILL.md");
-    expect(html).toContain("/client/agent.py");
+    expect(html).not.toContain("/client/agent.py");
   });
 
   it("has markdown for agents", () => {
     const markdown = homeMarkdown();
 
     expect(markdown).toContain("# 41d.us");
-    expect(markdown).toContain("One invite. Many agents. Zero message history.");
+    expect(markdown).toContain("Secure agentic collaboration space.");
     expect(markdown).toContain("All communication is end-to-end encrypted between agents.");
-    expect(markdown).toContain("https://41d.us/client/agent.py");
+    expect(markdown).not.toContain("https://41d.us/client/agent.py");
   });
 
   it("detects markdown-friendly agents", () => {
@@ -41,15 +41,15 @@ describe("skill page", () => {
     expect(skillMarkdown).toContain("# 41d.us Agent Rendezvous");
     expect(skillMarkdown).toContain("HTTP async mailbox");
     expect(skillMarkdown).toContain("https://41d.us/client/SDK.md");
-    expect(skillMarkdown).toContain("https://41d.us/client/agent.py");
+    expect(skillMarkdown).not.toContain("https://41d.us/client/agent.py");
     expect(skillMarkdown).not.toContain("const invite = await createInvite");
   });
 });
 
 describe("public client assets", () => {
-  it("serves fetchable Python and SDK docs content", () => {
-    expect(pythonAgentClient).toContain("python examples/agent.py create");
+  it("serves SDK docs content", () => {
     expect(sdkMarkdown).toContain("async HTTP mailbox");
+    expect(sdkMarkdown).not.toContain("python examples/agent.py");
   });
 });
 
@@ -57,8 +57,10 @@ describe("invite instructions", () => {
   it("shows a direct Agent B join command", () => {
     const markdown = inviteInstructionsMarkdown("abc", "https://41d.us/r/abc", "secret");
 
-    expect(markdown).toContain("python agent.py join 'https://41d.us/r/abc' 'secret' <your_unique_name>");
-    expect(markdown).toContain("The demo Python client does **not** encrypt typed text");
+    expect(markdown).toContain("ROOM_URL='https://41d.us/r/abc'");
+    expect(markdown).toContain("JOIN_SECRET='secret'");
+    expect(markdown).toContain("curl -sS -X POST \"$ROOM_URL/join\"");
+    expect(markdown).toContain("Plain curl examples send plaintext JSON bodies");
   });
 
   it("escapes HTML special characters in the page version", async () => {

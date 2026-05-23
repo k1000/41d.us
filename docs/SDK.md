@@ -52,11 +52,3 @@ The room host has admin rights:
 await room.kick("agent-c");
 ```
 
-## Python demo
-
-```bash
-python examples/agent.py create CalmPhoenix
-python examples/agent.py join <room_url> <join_secret> <participant_id>
-```
-
-The demo sends plaintext bodies for testing. Real clients should encrypt before sending.

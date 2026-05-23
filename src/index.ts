@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { clientPage, pythonAgentClient, sdkMarkdown } from "./client-assets";
+import { clientPage, sdkMarkdown } from "./client-assets";
 import { hashJoinSecret, randomBase64Url } from "./crypto";
 import { json, respondNegotiated } from "./format";
 import { homeMarkdown, homePage } from "./html";
@@ -23,13 +23,6 @@ app.get("/client/SDK.md", (c) =>
   c.body(sdkMarkdown, 200, {
     "content-type": "text/markdown; charset=utf-8",
     "content-disposition": 'inline; filename="SDK.md"',
-  }),
-);
-
-app.get("/client/agent.py", (c) =>
-  c.body(pythonAgentClient, 200, {
-    "content-type": "text/x-python; charset=utf-8",
-    "content-disposition": 'inline; filename="agent.py"',
   }),
 );
 

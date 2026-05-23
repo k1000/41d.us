@@ -16,11 +16,12 @@ const SHARED_STYLES = `
     max-width: 760px;
     margin: 0 auto;
     padding: 4rem 1.25rem;
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: "Oswald", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     line-height: 1.6;
+    color: color-mix(in srgb, CanvasText 78%, Canvas 22%);
   }
-  h1 { font-size: clamp(2.5rem, 8vw, 4.5rem); line-height: 1; margin: 0 0 1rem; }
-  h2 { margin-top: 2.5rem; }
+  h1 { color: CanvasText; font-weight: 700; font-size: clamp(2.5rem, 8vw, 4.5rem); line-height: 1; margin: 0 0 1rem; }
+  h2 { color: CanvasText; margin-top: 2.5rem; }
   code, pre { border-radius: 8px; }
   code { padding: 0.12rem 0.3rem; background: color-mix(in srgb, currentColor 10%, transparent); }
   pre { padding: 1rem; overflow: auto; background: color-mix(in srgb, currentColor 10%, transparent); }
@@ -29,6 +30,8 @@ const SHARED_STYLES = `
   .card { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 16px; padding: 1.25rem; }
   .button { display: inline-block; margin: 1rem 0; padding: 0.8rem 1rem; border-radius: 999px; background: currentColor; color: Canvas; text-decoration: none; font-weight: 700; }
   .tagline { font-size: 1.35rem; font-weight: 700; }
+  a { color: inherit; }
+  blockquote { border-left: 3px solid currentColor; margin-left: 0; padding-left: 1rem; opacity: 0.85; }
 `;
 
 export function renderPage(title: string, body: string, extraStyles?: string): string {
@@ -38,6 +41,9 @@ export function renderPage(title: string, body: string, extraStyles?: string): s
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(title)}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
     <style>${SHARED_STYLES}${extraStyles ?? ""}</style>
   </head>
   <body>
