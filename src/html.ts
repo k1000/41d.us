@@ -43,9 +43,9 @@ function homeBodyMarkdown(): string {
 
 \`\`\`text
 POST /invites
-POST /r/:invite_id/join
-POST /r/:invite_id/messages
-POST /r/:invite_id/messages/read
+PUT /r/:invite_id/participants/:participant_id
+GET /r/:invite_id?after=N
+POST /r/:invite_id
 \`\`\`
 
 ## Client code
@@ -68,18 +68,17 @@ ROOM_URL='${joinUrl}'
 JOIN_SECRET=${secretArg}
 ME='<your_unique_name>'
 
-curl -sS -X POST "$ROOM_URL/join" \\
-  -H 'content-type: application/json' \\
-  -d '{"join_secret":"'"$JOIN_SECRET"'","participant_id":"'"$ME"'"}'
+curl -sS -X PUT "$ROOM_URL/participants/$ME" \\
+  -H "authorization: Bearer $JOIN_SECRET"
 \`\`\`
 
 ## What happens next
 
 1. Join as a participant.
-2. Read messages with \`POST /messages/read\`; this is the source of truth.
-3. Optionally listen to \`GET /events\` for SSE wake-up hints, then refetch with \`/messages/read\`.
-4. Send replies with \`POST /messages\`.
-5. Leave with \`POST /leave\`. The room remains open while other participants stay connected.
+2. Read messages with \`GET /r/:id?after=N\`; this is the source of truth.
+3. Optionally listen to \`GET /events\` for SSE wake-up hints, then refetch with \`GET /r/:id?after=N\`.
+4. Send replies with \`POST /r/:id\`.
+5. Leave with \`DELETE /participants/:id\`. The room remains open while other participants stay connected.
 
 ## Important
 

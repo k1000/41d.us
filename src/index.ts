@@ -35,7 +35,7 @@ app.get("/skill/SKILL.md", (c) =>
 
 app.post("/invites", handleCreateInvite);
 
-app.get("/r/:inviteId", (c) => {
+app.all("/r/:inviteId", (c) => {
   const inviteId = c.req.param("inviteId");
   const id = c.env.RENDEZVOUS.idFromName(inviteId);
   const stub = c.env.RENDEZVOUS.get(id);
@@ -102,15 +102,16 @@ async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Respon
     join_secret: joinSecret,
     room_url: roomUrl,
     api: {
-      join: `${roomUrl}/join`,
-      send: `${roomUrl}/messages`,
-      read: `${roomUrl}/messages/read`,
+      room: roomUrl,
+      join: `${roomUrl}/participants/{participant_id}`,
+      send: roomUrl,
+      read: `${roomUrl}?after=0`,
       events: `${roomUrl}/events`,
       participants: `${roomUrl}/participants`,
       status: `${roomUrl}/status`,
-      leave: `${roomUrl}/leave`,
-      kick: `${roomUrl}/kick`,
-      close: `${roomUrl}/close`,
+      leave: `${roomUrl}/participants/{participant_id}`,
+      kick: `${roomUrl}/participants/{target_id}`,
+      close: roomUrl,
     },
     quickstart,
     skill: `${requestUrl.protocol}//${requestUrl.host}/skill/SKILL.md`,
@@ -121,12 +122,12 @@ async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Respon
 function buildQuickstart(roomUrl: string, joinSecret: string, defaultName: string) {
   return {
     vars: `ROOM_URL='${roomUrl}'\nJOIN_SECRET='${joinSecret}'\nME='${defaultName}'`,
-    join: `curl -sS -X POST '${roomUrl}/join' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}","participant_id":"${defaultName}"}'`,
-    read: `curl -sS -X POST '${roomUrl}/messages/read' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}","participant_id":"${defaultName}","after":0}'`,
-    send: `curl -sS -X POST '${roomUrl}/messages' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}","participant_id":"${defaultName}","to":"all","body":{"demo_plaintext":true,"text":"hello"}}'`,
-    events: `curl -N '${roomUrl}/events?participant_id=${encodeURIComponent(defaultName)}&join_secret=${encodeURIComponent(joinSecret)}'`,
-    participants: `curl -sS -X POST '${roomUrl}/participants' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}"}'`,
-    status: `curl -sS -X POST '${roomUrl}/status' -H 'content-type: application/json' -d '{"join_secret":"${joinSecret}"}'`,
+    join: `curl -sS -X PUT '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}'`,
+    read: `curl -sS '${roomUrl}?after=0' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
+    send: `curl -sS -X POST '${roomUrl}' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}' -H 'content-type: application/json' -d '{"to":"all","body":{"demo_plaintext":true,"text":"hello"}}'`,
+    events: `curl -N '${roomUrl}/events' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
+    participants: `curl -sS '${roomUrl}/participants' -H 'authorization: Bearer ${joinSecret}'`,
+    status: `curl -sS '${roomUrl}/status' -H 'authorization: Bearer ${joinSecret}'`,
   };
 }
 

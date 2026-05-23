@@ -58,54 +58,59 @@ export async function createInvite(baseUrl = "https://41d.us", options: CreateIn
 }
 
 export async function joinRoom(invite: Invite, participantId: string): Promise<RoomClient> {
-  const join = await post<{ ok: true; cursor: number }>(invite.api.join, invite, { participant_id: participantId });
+  const join = await request<{ ok: true; cursor: number }>(`${invite.room_url}/participants/${encodeURIComponent(participantId)}`, invite, { method: "PUT" });
   let cursor = join.cursor;
   return {
     invite,
     participantId,
     cursor,
     async send(to, body, options = {}) {
-      return post(invite.api.send, invite, {
-        participant_id: participantId,
-        to,
-        body,
-        reply_to: options.replyTo ?? null,
-        intent: options.intent ?? "notify",
-        priority: options.priority ?? "normal",
+      return request(invite.room_url, invite, {
+        method: "POST",
+        participantId,
+        body: {
+          to,
+          body,
+          reply_to: options.replyTo ?? null,
+          intent: options.intent ?? "notify",
+          priority: options.priority ?? "normal",
+        },
       });
     },
     async read(options = {}) {
-      const result = await post<{ cursor: number; messages: RoomMessage[] }>(invite.api.read, invite, {
-        participant_id: participantId,
-        after: cursor,
-        include_self: options.includeSelf ?? false,
-      });
+      const url = new URL(invite.room_url);
+      url.searchParams.set("after", String(cursor));
+      if (options.includeSelf) url.searchParams.set("include_self", "true");
+      const result = await request<{ cursor: number; messages: RoomMessage[] }>(url.toString(), invite, { participantId });
       cursor = result.cursor;
       return result.messages;
     },
     async participants() {
-      return post(invite.api.participants, invite, {});
+      return request(invite.api.participants, invite);
     },
     async status() {
-      return post(invite.api.status, invite, {});
+      return request(invite.api.status, invite);
     },
     async leave() {
-      await post(invite.api.leave, invite, { participant_id: participantId });
+      await request(`${invite.room_url}/participants/${encodeURIComponent(participantId)}`, invite, { method: "DELETE" });
     },
     async kick(targetId: string) {
-      return post(invite.api.kick, invite, { participant_id: participantId, target_id: targetId });
+      return request(`${invite.room_url}/participants/${encodeURIComponent(targetId)}`, invite, { method: "DELETE", participantId });
     },
     async close() {
-      return post(invite.api.close, invite, { participant_id: participantId });
+      return request(invite.room_url, invite, { method: "DELETE", participantId });
     },
   };
 }
 
-async function post<T>(url: string, invite: Invite, body: Record<string, unknown>): Promise<T> {
+async function request<T>(url: string, invite: Invite, options: { method?: string; participantId?: string; body?: Record<string, unknown> } = {}): Promise<T> {
+  const headers: Record<string, string> = { authorization: `Bearer ${invite.join_secret}` };
+  if (options.participantId) headers["x-participant-id"] = options.participantId;
+  if (options.body) headers["content-type"] = "application/json";
   const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ join_secret: invite.join_secret, ...body }),
+    method: options.method ?? "GET",
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined,
   });
   if (!response.ok) throw new Error(`${url} failed: ${response.status} ${await response.text()}`);
   return (await response.json()) as T;

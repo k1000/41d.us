@@ -45,10 +45,19 @@ export class RendezvousSession {
     const invite = await this.getValidInvite();
     if (invite instanceof Response) return invite;
 
+    if (isRoomRoot(url, invite.inviteId) && request.method === "GET" && request.headers.has("authorization")) return this.handleRead(request, invite);
+    if (isRoomRoot(url, invite.inviteId) && request.method === "POST") return this.handleSend(request, invite);
+    if (isRoomRoot(url, invite.inviteId) && request.method === "DELETE") return this.handleClose(request, invite);
+
+    if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "PUT") return this.handleJoin(request, invite, pathLastSegment(url));
+    if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "DELETE") return this.handleDeleteParticipant(request, invite, pathLastSegment(url));
+    if (url.pathname.endsWith("/participants") && request.method === "GET") return this.handleParticipants(request, invite);
+    if (url.pathname.endsWith("/status") && request.method === "GET") return this.handleStatus(request, invite);
+    if (url.pathname.endsWith("/events") && request.method === "GET") return this.handleEvents(request, invite);
+
     if (url.pathname.endsWith("/join") && request.method === "POST") return this.handleJoin(request, invite);
     if (url.pathname.endsWith("/messages") && request.method === "POST") return this.handleSend(request, invite);
     if (url.pathname.endsWith("/messages/read") && request.method === "POST") return this.handleRead(request, invite);
-    if (url.pathname.endsWith("/events") && request.method === "GET") return this.handleEvents(request, invite);
     if (url.pathname.endsWith("/participants") && request.method === "POST") return this.handleParticipants(request, invite);
     if (url.pathname.endsWith("/status") && request.method === "POST") return this.handleStatus(request, invite);
     if (url.pathname.endsWith("/kick") && request.method === "POST") return this.handleKick(request, invite);
@@ -56,7 +65,7 @@ export class RendezvousSession {
     if (url.pathname.endsWith("/leave") && request.method === "POST") return this.handleLeave(request, invite);
 
     if (request.headers.get("Upgrade") === "websocket") {
-      return new Response("WebSocket transport has been removed. Use the HTTP async mailbox endpoints.", { status: 410 });
+      return new Response("WebSocket transport has been removed. Use the HTTP Room API.", { status: 410 });
     }
 
     const roomUrl = httpRoomUrl(request);
@@ -70,8 +79,8 @@ export class RendezvousSession {
   // ── Auth helpers ──────────────────────────────────────────────
 
   private async authenticate(request: Request, invite: InviteState): Promise<Record<string, unknown> | Response> {
-    const body = await request.json() as Record<string, unknown>;
-    const auth = await this.authorizeToken(invite, (body.admission_token ?? body.join_secret) as string | undefined);
+    const body = await readJsonObject(request);
+    const auth = await this.authorizeToken(invite, tokenFromRequest(request, body));
     if (auth) return auth;
     return body;
   }
@@ -90,15 +99,25 @@ export class RendezvousSession {
   private async authenticateParticipant(request: Request, invite: InviteState): Promise<{ body: Record<string, unknown>; participantId: string } | Response> {
     const body = await this.authenticate(request, invite);
     if (body instanceof Response) return body;
-    const participantId = requireParticipantId(body.participant_id);
+    const participantId = requireParticipantId(body.participant_id ?? request.headers.get("x-participant-id"));
+    if (participantId instanceof Response) return participantId;
+    return { body, participantId };
+  }
+
+  private async authenticatePathParticipant(request: Request, invite: InviteState, pathParticipantId: string): Promise<{ body: Record<string, unknown>; participantId: string } | Response> {
+    const body = await this.authenticate(request, invite);
+    if (body instanceof Response) return body;
+    const participantId = requireParticipantId(pathParticipantId);
     if (participantId instanceof Response) return participantId;
     return { body, participantId };
   }
 
   // ── Handlers ──────────────────────────────────────────────────
 
-  private async handleJoin(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticateParticipant(request, invite);
+  private async handleJoin(request: Request, invite: InviteState, pathParticipantId?: string): Promise<Response> {
+    const auth = pathParticipantId
+      ? await this.authenticatePathParticipant(request, invite, pathParticipantId)
+      : await this.authenticateParticipant(request, invite);
     if (auth instanceof Response) return auth;
     const { participantId } = auth;
 
@@ -111,7 +130,7 @@ export class RendezvousSession {
     participants[participantId] = { id: participantId, joined_at: now, last_seen_at: now };
     const updated = { ...invite, phase: "ready", participants } satisfies InviteState;
     await this.state.storage.put(STATE_KEY, updated);
-    return json({ ok: true, room: roomInfo(updated), participant_id: participantId, is_host: participantId === invite.hostId, cursor: invite.nextSeq ?? 0, message: "Joined. Read with POST /messages/read and send with POST /messages." });
+    return json({ ok: true, room: roomInfo(updated), participant_id: participantId, is_host: participantId === invite.hostId, cursor: invite.nextSeq ?? 0, message: "Joined. Sync with GET room_url?after=N and send with POST room_url." });
   }
 
   private async handleSend(request: Request, invite: InviteState): Promise<Response> {
@@ -147,8 +166,8 @@ export class RendezvousSession {
     const { body, participantId } = auth;
 
     if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
-    const after = Number(body.after ?? 0);
-    const includeSelf = !!body.include_self;
+    const after = Number(body.after ?? new URL(request.url).searchParams.get("after") ?? 0);
+    const includeSelf = !!body.include_self || new URL(request.url).searchParams.get("include_self") === "true";
     const messages = (invite.messages ?? []).filter((msg) => msg.seq > after && (includeSelf || msg.from !== participantId) && this.visibleTo(msg, participantId));
     const participants = invite.participants ?? {};
     participants[participantId] = { ...participants[participantId], last_seen_at: new Date().toISOString() };
@@ -164,10 +183,9 @@ export class RendezvousSession {
 
   private async handleEvents(request: Request, invite: InviteState): Promise<Response> {
     const url = new URL(request.url);
-    const token = url.searchParams.get("admission_token") ?? url.searchParams.get("join_secret") ?? undefined;
-    const auth = await this.authorizeToken(invite, token);
+    const auth = await this.authorizeToken(invite, tokenFromRequest(request, {}));
     if (auth) return auth;
-    const participantResult = requireParticipantId(url.searchParams.get("participant_id"));
+    const participantResult = requireParticipantId(url.searchParams.get("participant_id") ?? request.headers.get("x-participant-id"));
     if (participantResult instanceof Response) return participantResult;
     const participantId = participantResult;
     if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
@@ -215,12 +233,20 @@ export class RendezvousSession {
     const auth = await this.authenticateParticipant(request, invite);
     if (auth instanceof Response) return auth;
     const { participantId } = auth;
+    return this.leaveParticipant(invite, participantId);
+  }
 
-    const participants = { ...invite.participants };
-    if (participants[participantId]) participants[participantId] = { ...participants[participantId], left_at: new Date().toISOString() };
-    await this.state.storage.put(STATE_KEY, { ...invite, participants } satisfies InviteState);
-    await this.maybeDeleteEmptyRoom();
-    return json({ ok: true });
+  private async handleDeleteParticipant(request: Request, invite: InviteState, targetIdFromPath: string): Promise<Response> {
+    const body = await this.authenticate(request, invite);
+    if (body instanceof Response) return body;
+    const targetResult = requireParticipantId(targetIdFromPath);
+    if (targetResult instanceof Response) return targetResult;
+    const targetId = targetResult as string;
+    const actorResult = requireParticipantId(body.participant_id ?? request.headers.get("x-participant-id") ?? targetId);
+    if (actorResult instanceof Response) return actorResult;
+    const actorId = actorResult as string;
+    if (actorId === targetId) return this.leaveParticipant(invite, targetId);
+    return this.kickParticipant(invite, actorId, targetId);
   }
 
   private async handleKick(request: Request, invite: InviteState): Promise<Response> {
@@ -232,15 +258,7 @@ export class RendezvousSession {
     if (targetResult instanceof Response) return json({ error: "target_id is required" }, 400);
     const targetId = targetResult as string;
 
-    if (hostId !== invite.hostId) return json({ error: "only host can kick participants" }, 403);
-    if (targetId === invite.hostId) return json({ error: "host cannot kick themselves" }, 400);
-
-    const participants = { ...invite.participants };
-    if (!participants[targetId] || participants[targetId].left_at) return json({ error: "target participant is not active" }, 404);
-    participants[targetId] = { ...participants[targetId], left_at: new Date().toISOString() };
-    const updated = { ...invite, participants } satisfies InviteState;
-    await this.state.storage.put(STATE_KEY, updated);
-    return json({ ok: true, kicked: targetId, room: roomInfo(updated) });
+    return this.kickParticipant(invite, hostId, targetId);
   }
 
   private async handleClose(request: Request, invite: InviteState): Promise<Response> {
@@ -254,6 +272,26 @@ export class RendezvousSession {
   }
 
   // ── Domain helpers ────────────────────────────────────────────
+
+  private async leaveParticipant(invite: InviteState, participantId: string): Promise<Response> {
+    const participants = { ...invite.participants };
+    if (participants[participantId]) participants[participantId] = { ...participants[participantId], left_at: new Date().toISOString() };
+    await this.state.storage.put(STATE_KEY, { ...invite, participants } satisfies InviteState);
+    await this.maybeDeleteEmptyRoom();
+    return json({ ok: true });
+  }
+
+  private async kickParticipant(invite: InviteState, hostId: string, targetId: string): Promise<Response> {
+    if (hostId !== invite.hostId) return json({ error: "only host can kick participants" }, 403);
+    if (targetId === invite.hostId) return json({ error: "host cannot kick themselves" }, 400);
+
+    const participants = { ...invite.participants };
+    if (!participants[targetId] || participants[targetId].left_at) return json({ error: "target participant is not active" }, 404);
+    participants[targetId] = { ...participants[targetId], left_at: new Date().toISOString() };
+    const updated = { ...invite, participants } satisfies InviteState;
+    await this.state.storage.put(STATE_KEY, updated);
+    return json({ ok: true, kicked: targetId, room: roomInfo(updated) });
+  }
 
   private notifyMessage(message: RoomMessage, lastSeq: number): void {
     for (const [id, subscriber] of this.eventSubscribers) {
@@ -330,6 +368,29 @@ export class RendezvousSession {
 }
 
 // ── Module-level helpers ─────────────────────────────────────────
+
+async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
+  if (request.method === "GET" || request.method === "DELETE") return {};
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) return {};
+  return (await request.json().catch(() => ({}))) as Record<string, unknown>;
+}
+
+function tokenFromRequest(request: Request, body: Record<string, unknown>): string | undefined {
+  const authorization = request.headers.get("authorization") ?? "";
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (bearer) return bearer;
+  const url = new URL(request.url);
+  return (body.admission_token ?? body.join_secret ?? url.searchParams.get("admission_token") ?? url.searchParams.get("join_secret")) as string | undefined;
+}
+
+function isRoomRoot(url: URL, inviteId: string): boolean {
+  return url.pathname.replace(/\/$/, "") === `/r/${inviteId}`;
+}
+
+function pathLastSegment(url: URL): string {
+  return decodeURIComponent(url.pathname.split("/").filter(Boolean).at(-1) ?? "");
+}
 
 function roomInfo(invite: InviteState) {
   return {
