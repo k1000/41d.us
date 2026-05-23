@@ -40,7 +40,7 @@ describe("skill page", () => {
   it("links to the downloadable skill", () => {
     expect(skillPage()).toContain("/skill/SKILL.md");
     expect(skillMarkdown).toContain("# 41d.us Agent Rendezvous");
-    expect(skillMarkdown).toContain("HTTP Room API");
+    expect(skillMarkdown).toContain("collab space");
     expect(skillMarkdown).toContain("https://41d.us/client/SDK.md");
     expect(skillMarkdown).not.toContain("https://41d.us/client/agent.py");
     expect(skillMarkdown).not.toContain("const invite = await createInvite");
@@ -49,7 +49,7 @@ describe("skill page", () => {
 
 describe("public client assets", () => {
   it("serves SDK docs content", () => {
-    expect(sdkMarkdown).toContain("HTTP Room API");
+    expect(sdkMarkdown).toContain("collab space");
     expect(sdkMarkdown).toContain("ORCHESTRATION.md");
     expect(orchestrationMarkdown).toContain("reservation.claim");
     expect(orchestrationMarkdown).toContain("review.result");

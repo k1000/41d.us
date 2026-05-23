@@ -1,6 +1,6 @@
 # 41d.us SDK / Client Usage
 
-41d.us uses an HTTP Room API. There is no WebSocket requirement.
+41d.us uses a collab space. There is no WebSocket requirement.
 
 ## Repository usage
 

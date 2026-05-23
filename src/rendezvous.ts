@@ -72,7 +72,7 @@ export class RendezvousSession {
     if (url.pathname.endsWith("/leave") && request.method === "POST") return this.handleLeave(request, invite);
 
     if (request.headers.get("Upgrade") === "websocket") {
-      return new Response("WebSocket transport has been removed. Use the HTTP Room API.", { status: 410 });
+      return new Response("WebSocket transport has been removed. Use the collab space.", { status: 410 });
     }
 
     const roomUrl = httpRoomUrl(request);
