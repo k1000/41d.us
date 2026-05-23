@@ -19,6 +19,7 @@ import {
 import { prefersMarkdown } from "../src/format";
 import { homeMarkdown, homePage, inviteInstructionsMarkdown } from "../src/html";
 import { securityMarkdown, securityPage } from "../src/security";
+import { createInvite, joinRoom, type Invite } from "../src/sdk";
 import { skillMarkdown, skillPage } from "../src/skill";
 
 describe("homePage", () => {
@@ -126,6 +127,79 @@ describe("invite creation", () => {
   });
 });
 
+describe("SDK HTTP client", () => {
+  it("creates invites with normalized request keys", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody: unknown;
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        intro: "intro",
+        next_step: "join",
+        invite_id: "invite",
+        room: { name: "room", host_id: "host", max_participants: 2 },
+        join_secret: "secret",
+        room_url: "https://41d.us/r/invite",
+        api: {},
+        skill: "https://41d.us/skill/SKILL.md",
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }), { headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+
+    try {
+      await createInvite("https://41d.us/", { hostId: "agent-a", roomName: "room", maxParticipants: 3, purpose: "test" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requestBody).toMatchObject({ host_id: "agent-a", room_name: "room", max_participants: 3, purpose: "test" });
+  });
+
+  it("sends falsy JSON bodies", async () => {
+    const invite: Invite = {
+      intro: "intro",
+      next_step: "join",
+      invite_id: "invite",
+      room: { name: "room", host_id: "host", max_participants: 2 },
+      join_secret: "secret",
+      room_url: "https://41d.us/r/invite",
+      api: {
+        join: "https://41d.us/r/invite/participants/{participant_id}",
+        send: "https://41d.us/r/invite",
+        read: "https://41d.us/r/invite?after=0",
+        events: "https://41d.us/r/invite/events",
+        board: "https://41d.us/r/invite/board",
+        participants: "https://41d.us/r/invite/participants",
+        status: "https://41d.us/r/invite/status",
+        leave: "https://41d.us/r/invite/participants/{participant_id}",
+        kick: "https://41d.us/r/invite/participants/{target_id}",
+        close: "https://41d.us/r/invite",
+        export: "https://41d.us/r/invite/export",
+      },
+      skill: "https://41d.us/skill/SKILL.md",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      return new Response(JSON.stringify({ ok: true, cursor: 0 }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const room = await joinRoom(invite, "agent-a");
+      await room.setBoardKey("enabled", false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requests[1].init?.headers).toMatchObject({ "content-type": "application/json" });
+    expect(requests[1].init?.body).toBe("false");
+  });
+});
+
 describe("invite secret helpers", () => {
   it("generates base64url invite material", () => {
     expect(randomBase64Url(16)).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -143,19 +217,7 @@ describe("byte-size helpers", () => {
     expect(MAX_BODY_BYTES).toBe(16 * 1024);
   });
 
-  // Verify TextEncoder counts actual UTF-8 bytes, not JS string length.
-  // JSON.stringify serialises the body to a string first, so .length reflects UTF-16 code units.
-  it("TextEncoder correctly distinguishes string length from byte count", () => {
-    // A string of repeated emoji: each emoji is 2 UTF-16 code units but 4 UTF-8 bytes.
-    // JSON produces escape sequences for non-ASCII, so compare the raw string before stringify.
-    const emoji = "\ud83d\ude00\ud83d\ude00\ud83d\ude00";
-    const rawLen = emoji.length; // 6 UTF-16 code units
-    const utf8Bytes = new TextEncoder().encode(emoji).length; // 12 UTF-8 bytes (4 each)
-    expect(utf8Bytes).toBe(rawLen * 2); // UTF-8 is 2× for emoji
-  });
-
   it("TextEncoder correctly sizes a body at the boundary", () => {
-    // Single-byte chars: n chars → n UTF-8 bytes.
     expect(new TextEncoder().encode("x".repeat(MAX_BODY_BYTES)).length).toBe(MAX_BODY_BYTES);
     expect(new TextEncoder().encode("x".repeat(MAX_BODY_BYTES + 1)).length).toBe(MAX_BODY_BYTES + 1);
   });
