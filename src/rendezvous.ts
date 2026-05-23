@@ -29,6 +29,7 @@ export class RendezvousSession {
     if (url.pathname.endsWith("/messages") && request.method === "POST") return this.handleSend(request, invite);
     if (url.pathname.endsWith("/messages/read") && request.method === "POST") return this.handleRead(request, invite);
     if (url.pathname.endsWith("/participants") && request.method === "POST") return this.handleParticipants(request, invite);
+    if (url.pathname.endsWith("/kick") && request.method === "POST") return this.handleKick(request, invite);
     if (url.pathname.endsWith("/leave") && request.method === "POST") return this.handleLeave(request, invite);
 
     if (request.headers.get("Upgrade") !== "websocket") {
@@ -88,15 +89,18 @@ export class RendezvousSession {
 
   private async handleJoin(request: Request, invite: InviteState): Promise<Response> {
     const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string };
-    const participantId = sanitizeParticipantId(body.participant_id ?? invite.hostId);
+    const participantResult = requireParticipantId(body.participant_id);
+    if (participantResult instanceof Response) return participantResult;
+    const participantId = participantResult;
     const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
     if (auth) return auth;
     const participants = invite.participants ?? {};
     if (!participants[participantId] && Object.keys(participants).filter((id) => !participants[id].left_at).length >= (invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS)) {
       return json({ error: "room is full", max_participants: invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS }, 409);
     }
+    if (participants[participantId] && !participants[participantId].left_at) return json({ error: "participant_id already joined" }, 409);
     const now = new Date().toISOString();
-    participants[participantId] = { id: participantId, joined_at: participants[participantId]?.joined_at ?? now, last_seen_at: now };
+    participants[participantId] = { id: participantId, joined_at: now, last_seen_at: now };
     const updated = { ...invite, phase: "ready", participants } satisfies InviteState;
     await this.state.storage.put(STATE_KEY, updated);
     return json({ ok: true, room: roomInfo(updated), participant_id: participantId, is_host: participantId === invite.hostId, cursor: invite.nextSeq ?? 0, message: "Joined. Read with POST /messages/read and send with POST /messages." });
@@ -104,7 +108,9 @@ export class RendezvousSession {
 
   private async handleSend(request: Request, invite: InviteState): Promise<Response> {
     const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string; to?: Recipient; body?: unknown; reply_to?: string | null; intent?: string; priority?: string };
-    const participantId = sanitizeParticipantId(body.participant_id);
+    const participantResult = requireParticipantId(body.participant_id);
+    if (participantResult instanceof Response) return participantResult;
+    const participantId = participantResult;
     const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
     if (auth) return auth;
     if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
@@ -130,7 +136,9 @@ export class RendezvousSession {
 
   private async handleRead(request: Request, invite: InviteState): Promise<Response> {
     const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string; after?: number; include_self?: boolean };
-    const participantId = sanitizeParticipantId(body.participant_id);
+    const participantResult = requireParticipantId(body.participant_id);
+    if (participantResult instanceof Response) return participantResult;
+    const participantId = participantResult;
     const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
     if (auth) return auth;
     if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
@@ -151,7 +159,9 @@ export class RendezvousSession {
 
   private async handleLeave(request: Request, invite: InviteState): Promise<Response> {
     const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string };
-    const participantId = sanitizeParticipantId(body.participant_id);
+    const participantResult = requireParticipantId(body.participant_id);
+    if (participantResult instanceof Response) return participantResult;
+    const participantId = participantResult;
     const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
     if (auth) return auth;
     const participants = invite.participants ?? {};
@@ -159,6 +169,35 @@ export class RendezvousSession {
     await this.state.storage.put(STATE_KEY, { ...invite, participants } satisfies InviteState);
     await this.maybeDeleteEmptyRoom();
     return json({ ok: true });
+  }
+
+  private async handleKick(request: Request, invite: InviteState): Promise<Response> {
+    const body = await request.json() as { admission_token?: string; join_secret?: string; participant_id?: string; target_id?: string };
+    const hostResult = requireParticipantId(body.participant_id);
+    if (hostResult instanceof Response) return hostResult;
+    const hostId = hostResult;
+    const targetResult = requireParticipantId(body.target_id);
+    if (targetResult instanceof Response) return json({ error: "target_id is required" }, 400);
+    const targetId = targetResult;
+    const auth = await this.authorize(invite, body.admission_token ?? body.join_secret);
+    if (auth) return auth;
+    if (hostId !== invite.hostId) return json({ error: "only host can kick participants" }, 403);
+    if (targetId === invite.hostId) return json({ error: "host cannot kick themselves" }, 400);
+
+    const participants = invite.participants ?? {};
+    if (!participants[targetId] || participants[targetId].left_at) return json({ error: "target participant is not active" }, 404);
+    participants[targetId] = { ...participants[targetId], left_at: new Date().toISOString() };
+    const updated = { ...invite, participants } satisfies InviteState;
+    await this.state.storage.put(STATE_KEY, updated);
+
+    for (const socket of this.openedSockets()) {
+      if (this.getAttachment(socket).participantId === targetId) {
+        this.send(socket, { type: "error", error: "kicked by host" });
+        socket.close(1008, "kicked by host");
+      }
+    }
+
+    return json({ ok: true, kicked: targetId, room: roomInfo(updated) });
   }
 
   private async openSocket(ws: WebSocket, message: Extract<ClientMessage, { type: "open" }>, invite: InviteState): Promise<void> {
@@ -169,7 +208,18 @@ export class RendezvousSession {
       ws.close(1008, "auth failed");
       return;
     }
-    const participantId = sanitizeParticipantId(message.participant_id ?? message.name ?? message.role ?? invite.hostId);
+    const participantResult = requireParticipantId(message.participant_id ?? message.name);
+    if (participantResult instanceof Response) {
+      this.sendError(ws, await participantResult.text());
+      ws.close(1008, "participant_id required");
+      return;
+    }
+    const participantId = participantResult;
+    if (this.isJoined(invite, participantId) || this.openedSockets().some((socket) => this.getAttachment(socket).participantId === participantId)) {
+      this.sendError(ws, "participant_id already joined");
+      ws.close(1008, "participant_id already joined");
+      return;
+    }
     ws.serializeAttachment({ participantId, opened: true } satisfies SocketAttachment);
     this.send(ws, { type: "ready", participant_id: participantId, count: this.openedSockets().length });
     this.broadcastServer(ws, { type: "peer_joined", participant_id: participantId, count: this.openedSockets().length });
@@ -267,10 +317,14 @@ function roomInfo(invite: InviteState) {
   };
 }
 
-function sanitizeParticipantId(value: unknown): string {
+function requireParticipantId(value: unknown): string | Response {
   const id = typeof value === "string" ? value.trim() : "";
-  if (!id) return `agent-${crypto.randomUUID().slice(0, 8)}`;
-  return id.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 64);
+  if (!id) return json({ error: "participant_id is required" }, 400);
+  return sanitizeParticipantId(id);
+}
+
+function sanitizeParticipantId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 64);
 }
 
 function websocketUrl(request: Request): string {

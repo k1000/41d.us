@@ -102,6 +102,13 @@ app.get("/r/:inviteId", (c) => {
   return stub.fetch(c.req.raw);
 });
 
+app.all("/r/:inviteId/*", (c) => {
+  const inviteId = c.req.param("inviteId");
+  const id = c.env.RENDEZVOUS.idFromName(inviteId);
+  const stub = c.env.RENDEZVOUS.get(id);
+  return stub.fetch(c.req.raw);
+});
+
 app.notFound((c) => c.text("not found", 404));
 
 function sanitizeId(value: string): string {
