@@ -7,3 +7,6 @@ dist/
 
 .pi/
 .pi-memory/
+
+__pycache__/
+*.pyc
