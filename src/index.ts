@@ -1,5 +1,5 @@
 import { Context, Hono } from "hono";
-import { clientPage, sdkMarkdown } from "./client-assets";
+import { clientPage, orchestrationMarkdown, sdkMarkdown } from "./client-assets";
 import { DEFAULT_MAX_PARTICIPANTS, INVITE_TTL_MS, MAX_PARTICIPANTS_HARD_LIMIT } from "./constants";
 import { hashJoinSecret, randomBase64Url } from "./crypto";
 import { json, respondNegotiated } from "./format";
@@ -23,6 +23,13 @@ app.get("/client/SDK.md", (c) =>
   c.body(sdkMarkdown, 200, {
     "content-type": "text/markdown; charset=utf-8",
     "content-disposition": 'inline; filename="SDK.md"',
+  }),
+);
+
+app.get("/client/ORCHESTRATION.md", (c) =>
+  c.body(orchestrationMarkdown, 200, {
+    "content-type": "text/markdown; charset=utf-8",
+    "content-disposition": 'inline; filename="ORCHESTRATION.md"',
   }),
 );
 

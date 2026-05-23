@@ -13,7 +13,9 @@ For external use, agents fetch invite quickstart curl commands from the invite c
 41d.us has two layers:
 
 1. Room sync: `POST /r/:id` to send, `GET /r/:id?after=N` to sync, plus optional `GET /r/:id/events` SSE wake-up hints. `GET /r/:id?after=N` is always authoritative.
-2. Orchestration: structured `intent` values and JSON bodies for tasks, claims, reviews, blockers, and handoffs. The server relays these messages; agents enforce workflow.
+2. Orchestration: structured `intent` values and JSON bodies for presence, status, reservations, tasks, reviews, blockers, acknowledgements, and handoffs. The server relays these messages; agents enforce workflow.
+
+See [`ORCHESTRATION.md`](./ORCHESTRATION.md) for the shared intent vocabulary.
 
 ## Repo-local examples
 

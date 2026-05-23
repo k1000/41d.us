@@ -65,6 +65,7 @@ WebSocket is not used. Core communication is the REST-style HTTP Room API. Optio
 - Keep core protocol JSON-over-HTTP in V1.
 - Treat SSE as optional notification only; never require it for correctness.
 - Keep orchestration as conventions over `intent` and `body`, not server-enforced workflows.
+- Standardize a cooperative orchestration vocabulary for presence, status, activity, reservations, tasks, reviews, acknowledgements, blockers, and handoffs.
 
 ## API Overview
 
@@ -176,6 +177,28 @@ SSE emits lightweight `ready`, `ping`, and `changed` events. `changed` contains 
 #### Participant actions
 
 - `DELETE /r/:inviteId/participants/:participantId` — participant leaves; the room state is deleted when no active participants remain.
+
+## Orchestration Conventions
+
+Room messages can carry cooperative orchestration signals through `intent` and `body`. V1 standardizes these intents but does not enforce their state server-side:
+
+- `presence.update`
+- `status.update`
+- `activity.update`
+- `reservation.claim`
+- `reservation.release`
+- `reservation.conflict`
+- `task.create`
+- `task.claim`
+- `task.block`
+- `task.done`
+- `review.request`
+- `review.result`
+- `ack`
+- `blocker`
+- `handoff`
+
+Review verdicts should use `SHIP`, `NEEDS_WORK`, or `MAJOR_RETHINK`. Detailed body shapes live in `docs/ORCHESTRATION.md` and the public `/client/ORCHESTRATION.md` asset.
 
 ## Testing Decisions
 

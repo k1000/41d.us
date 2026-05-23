@@ -1,6 +1,6 @@
 import { MAX_BODY_BYTES } from "../src/constants";
 import { describe, expect, it } from "vitest";
-import { sdkMarkdown } from "../src/client-assets";
+import { orchestrationMarkdown, sdkMarkdown } from "../src/client-assets";
 import app from "../src/index";
 import { hashJoinSecret, randomBase64Url } from "../src/crypto";
 import { prefersMarkdown } from "../src/format";
@@ -50,6 +50,9 @@ describe("skill page", () => {
 describe("public client assets", () => {
   it("serves SDK docs content", () => {
     expect(sdkMarkdown).toContain("HTTP Room API");
+    expect(sdkMarkdown).toContain("ORCHESTRATION.md");
+    expect(orchestrationMarkdown).toContain("reservation.claim");
+    expect(orchestrationMarkdown).toContain("review.result");
     expect(sdkMarkdown).not.toContain("python examples/agent.py");
   });
 });
