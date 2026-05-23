@@ -6,7 +6,7 @@ export interface Invite {
   invite_id: string;
   room: { name: string; host_id: string; max_participants: number };
   join_secret: string;
-  url: string;
+  room_url: string;
   api: {
     join: string;
     send: string;
@@ -15,8 +15,6 @@ export interface Invite {
     leave: string;
     kick: string;
   };
-  instructions: string;
-  readme: string;
   skill: string;
   expires_at: string;
 }

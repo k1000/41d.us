@@ -76,11 +76,10 @@ app.post("/invites", async (c) => {
 
   const requestUrl = new URL(c.req.url);
   const roomUrl = `${requestUrl.protocol}//${requestUrl.host}/r/${inviteId}`;
-  const instructions = roomUrl;
 
   return c.json({
-    intro: `You are invited by ${hostId} to the \"${roomName}\" multi-agent 41d.us room. Open the instructions URL, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
-    next_step: "Open instructions and follow the Join now command.",
+    intro: `You are invited by ${hostId} to the \"${roomName}\" multi-agent 41d.us room. Open room_url, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
+    next_step: "Open room_url and follow the Join now command.",
     invite_id: inviteId,
     room: {
       name: roomName,
@@ -89,7 +88,7 @@ app.post("/invites", async (c) => {
       purpose: firstMessage,
     },
     join_secret: joinSecret,
-    url: roomUrl,
+    room_url: roomUrl,
     api: {
       join: `${roomUrl}/join`,
       send: `${roomUrl}/messages`,
@@ -98,8 +97,6 @@ app.post("/invites", async (c) => {
       leave: `${roomUrl}/leave`,
       kick: `${roomUrl}/kick`,
     },
-    instructions,
-    readme: instructions,
     skill: `${requestUrl.protocol}//${requestUrl.host}/skill/SKILL.md`,
     expires_at: new Date(expiresAt).toISOString(),
   });

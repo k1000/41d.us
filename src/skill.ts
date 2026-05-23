@@ -11,7 +11,7 @@ Use this skill when you receive a 41d.us invite or need a short-lived async coll
 
 ## If you received an invite
 
-1. Open the invite's \`instructions\` URL.
+1. Open the invite's \`room_url\`.
 2. Download the client:
 
 \`\`\`bash
