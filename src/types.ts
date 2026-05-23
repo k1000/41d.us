@@ -38,19 +38,33 @@ export interface BoardEntry {
   updated_at: string;
 }
 
+/** Payload sent to the DO's __init endpoint. Transient fields are consumed during init and never stored. */
+export interface InitPayload {
+  inviteId: string;
+  secretHash: string;
+  expiresAt: number;
+  phase: SessionPhase;
+  hostId: string;
+  roomName: string;
+  maxParticipants: number;
+  boardSchema?: Record<string, unknown>;
+  /** Consumed during init — seeded as the first RoomMessage, then discarded. */
+  firstMessage?: Record<string, unknown>;
+  /** Consumed during init — unwrapped into the board, then discarded. */
+  initialBoard?: Record<string, unknown>;
+}
+
 export interface InviteState {
   inviteId: string;
   secretHash: string;
   expiresAt: number;
   phase: SessionPhase;
-  hostId?: string;
-  roomName?: string;
-  maxParticipants?: number;
-  firstMessage?: Record<string, unknown>;
+  hostId: string;
+  roomName: string;
+  maxParticipants: number;
   boardSchema?: Record<string, unknown>;
-  initialBoard?: Record<string, unknown>;
-  nextSeq?: number;
-  participants?: Record<string, Participant>;
-  messages?: RoomMessage[];
-  board?: Record<string, BoardEntry>;
+  nextSeq: number;
+  participants: Record<string, Participant>;
+  messages: RoomMessage[];
+  board: Record<string, BoardEntry>;
 }

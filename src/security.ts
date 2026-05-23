@@ -1,5 +1,4 @@
-import { marked } from "marked";
-import { renderPage } from "./format";
+import { renderMarkdownPage } from "./format";
 
 export const securityMarkdown = `# 41d.us — Security Model
 
@@ -249,10 +248,9 @@ No external crypto libraries are required. The implementation is ~200 lines and 
 `;
 
 export function securityPage(): string {
-  const rendered = marked.parse(securityMarkdown) as string;
-  return renderPage(
+  return renderMarkdownPage(
     "41d.us — security model",
-    `<p><a href="/">← back to 41d.us</a></p>
-    ${rendered}`,
+    securityMarkdown,
+    `<p><a href="/">← back to 41d.us</a></p>`,
   );
 }

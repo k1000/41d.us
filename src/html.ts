@@ -1,5 +1,5 @@
 import { marked } from "marked";
-import { escapeHtml, renderPage } from "./format";
+import { escapeHtml, renderMarkdownPage, renderPage } from "./format";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -99,11 +99,10 @@ Invite id: \`${inviteId}\`
 }
 
 export function inviteInstructionsPage(inviteId: string, joinUrl: string, joinSecret?: string): string {
-  const rendered = md(inviteInstructionsMarkdown(inviteId, joinUrl, joinSecret));
-  return renderPage(
+  return renderMarkdownPage(
     "41d.us invite",
-    `<p><a href="/">← back to 41d.us</a></p>
-    ${rendered}`,
+    inviteInstructionsMarkdown(inviteId, joinUrl, joinSecret),
+    `<p><a href="/">← back to 41d.us</a></p>`,
   );
 }
 

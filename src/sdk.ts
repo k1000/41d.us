@@ -42,7 +42,10 @@ export interface CreateInviteOptions {
   hostId?: string;
   roomName?: string;
   maxParticipants?: number;
+  /** Convenience: plain-text purpose string. Sends as `first_message: { text: ... }`. */
   purpose?: string;
+  /** Raw first_message value (string or object). Overrides purpose. */
+  firstMessage?: string | Record<string, unknown>;
   boardSchema?: Record<string, unknown>;
   board?: Record<string, unknown>;
 }
@@ -92,6 +95,7 @@ export async function createInvite(baseUrl = "https://41d.us", options: CreateIn
       room_name: options.roomName,
       max_participants: options.maxParticipants,
       purpose: options.purpose,
+      first_message: options.firstMessage,
       board_schema: options.boardSchema,
       board: options.board,
     }),
@@ -135,45 +139,40 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
     }
   }
 
-  /** Encrypt a plain body for the given recipients. */
-  async function encryptForSend(plainBody: unknown, to: Recipient): Promise<EncryptedBody> {
-    const recipientIds = to === "all"
-      ? [...peerKeys.keys()]
-      : (Array.isArray(to) ? to : [to]);
+  function recipientIdsFor(to: Recipient): string[] {
+    return to === "all" ? [...peerKeys.keys()] : (Array.isArray(to) ? to : [to]);
+  }
 
-    const plaintext = JSON.stringify(plainBody);
+  async function requireSharedKey(peerId: string): Promise<CryptoKey> {
+    const sharedKey = await ensureSharedKey(peerId);
+    if (!sharedKey) throw new Error(`No public key from ${peerId}. Wait for them to announceKey() and sync by reading.`);
+    return sharedKey;
+  }
 
-    // Direct message to a single recipient (not self)
-    if (recipientIds.length === 1 && recipientIds[0] !== participantId) {
-      const sharedKey = await ensureSharedKey(recipientIds[0]);
-      if (!sharedKey) throw new Error(`No public key from ${recipientIds[0]}. Wait for them to announceKey() and sync by reading.`);
-      const { ciphertext, iv } = await encryptWithKey(sharedKey, plaintext);
-      return { encrypted: true, ciphertext, iv };
-    }
+  async function encryptDirectBody(plaintext: string, recipientId: string): Promise<EncryptedBody> {
+    const { ciphertext, iv } = await encryptWithKey(await requireSharedKey(recipientId), plaintext);
+    return { encrypted: true, ciphertext, iv };
+  }
 
-    // Broadcast or multi-recipient: generate a message key, encrypt body with it,
-    // then wrap the message key for each recipient (including self).
+  async function wrapMessageKey(messageKey: CryptoKey, recipientId: string): Promise<{ encrypted_key: string; iv: string }> {
+    return wrapKeyForRecipient(messageKey, recipientId === participantId ? selfKey : await requireSharedKey(recipientId));
+  }
+
+  async function encryptWrappedBody(plaintext: string, recipientIds: string[]): Promise<EncryptedBody> {
     const messageKey = await generateMessageKey();
     const { ciphertext, iv } = await encryptWithKey(messageKey, plaintext);
     const keys: Record<string, { encrypted_key: string; iv: string }> = {};
-
-    for (const recipientId of recipientIds) {
-      if (recipientId === participantId) {
-        // Wrap for self using self-derived key
-        keys[participantId] = await wrapKeyForRecipient(messageKey, selfKey);
-      } else {
-        const sharedKey = await ensureSharedKey(recipientId);
-        if (!sharedKey) throw new Error(`No public key from ${recipientId}. Wait for them to announceKey() and sync by reading.`);
-        keys[recipientId] = await wrapKeyForRecipient(messageKey, sharedKey);
-      }
-    }
-
-    // Always include self so we can read our own messages
-    if (!keys[participantId]) {
-      keys[participantId] = await wrapKeyForRecipient(messageKey, selfKey);
-    }
-
+    for (const recipientId of recipientIds) keys[recipientId] = await wrapMessageKey(messageKey, recipientId);
+    if (!keys[participantId]) keys[participantId] = await wrapMessageKey(messageKey, participantId);
     return { encrypted: true, ciphertext, iv, keys };
+  }
+
+  /** Encrypt a plain body for the given recipients. */
+  async function encryptForSend(plainBody: unknown, to: Recipient): Promise<EncryptedBody> {
+    const recipientIds = recipientIdsFor(to);
+    const plaintext = JSON.stringify(plainBody);
+    if (recipientIds.length === 1 && recipientIds[0] !== participantId) return encryptDirectBody(plaintext, recipientIds[0]);
+    return encryptWrappedBody(plaintext, recipientIds);
   }
 
   /** Decrypt a message body if it's encrypted. Returns the original body if plaintext. */
@@ -295,11 +294,12 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
 async function request<T>(url: string, invite: Invite, options: { method?: string; participantId?: string; body?: unknown } = {}): Promise<T> {
   const headers: Record<string, string> = { authorization: `Bearer ${invite.join_secret}` };
   if (options.participantId) headers["x-participant-id"] = options.participantId;
-  if (options.body) headers["content-type"] = "application/json";
+  const hasBody = options.body !== undefined;
+  if (hasBody) headers["content-type"] = "application/json";
   const response = await fetch(url, {
     method: options.method ?? "GET",
     headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    body: hasBody ? JSON.stringify(options.body) : undefined,
   });
   if (!response.ok) throw new Error(`${url} failed: ${response.status} ${await response.text()}`);
   return (await response.json()) as T;

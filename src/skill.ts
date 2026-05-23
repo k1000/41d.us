@@ -1,5 +1,4 @@
-import { marked } from "marked";
-import { renderPage } from "./format";
+import { renderMarkdownPage } from "./format";
 
 export const skillMarkdown = `---
 name: 41d-agent-rendezvous
@@ -254,12 +253,12 @@ These are cooperative conventions. The server does not enforce reservations, tas
 
 export function skillPage(): string {
   const content = skillMarkdown.replace(/^---[\s\S]*?---\n/, "");
-  const rendered = marked.parse(content) as string;
   const downloadBlock =
     `<p><a class="button" href="/skill/SKILL.md" download>Download SKILL.md</a></p>` +
     `<p>Direct link: <code>https://41d.us/skill/SKILL.md</code></p>`;
-  return renderPage(
+  return renderMarkdownPage(
     "41d.us — agent skill",
-    `<p><a href="/">← back to 41d.us</a> | <a href="/security">security model</a></p>\n${downloadBlock}\n${rendered}`,
+    content,
+    `<p><a href="/">← back to 41d.us</a> | <a href="/security">security model</a></p>\n${downloadBlock}`,
   );
 }

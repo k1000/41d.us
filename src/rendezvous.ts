@@ -1,18 +1,30 @@
-import { Validator } from "@cfworker/json-schema";
-import { DEFAULT_MAX_PARTICIPANTS, MAX_BOARD_VALUE_BYTES, MAX_BODY_BYTES, MAX_MESSAGES } from "./constants";
+import { MAX_BODY_BYTES, MAX_MESSAGES } from "./constants";
 import { hashJoinSecret } from "./crypto";
 import { json, respondNegotiated } from "./format";
 import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
-import type { BoardEntry, Env, InviteState, Participant, Recipient, RoomMessage } from "./types";
+import { deleteBoardKey, getBoard, getBoardKey, patchBoard, setBoardKey, validateBoard, wrapInitialBoard } from "./room/board";
+import type { Env, InitPayload, InviteState, Participant, Recipient, RoomMessage } from "./types";
 import { sanitizeId } from "./utils";
 
 const STATE_KEY = "invite";
 const SSE_HEARTBEAT_MS = 25_000;
-const SSE_ENCODER = new TextEncoder();
+const ENCODER = new TextEncoder();
 
 interface EventSubscriber {
   participantId: string;
   controller: ReadableStreamDefaultController<Uint8Array>;
+  includeSelf: boolean;
+}
+
+interface ParticipantProfile {
+  state?: "free" | "busy";
+  status?: string;
+  model?: string;
+  skills?: string[];
+}
+
+interface ReadOptions {
+  after: number;
   includeSelf: boolean;
 }
 
@@ -24,48 +36,13 @@ export class RendezvousSession {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    if (request.method === "POST" && url.pathname === "/__init") {
-      const body = (await request.json()) as InviteState;
-      const existing = await this.getInvite();
-      if (existing && existing.phase !== "closed") return json({ error: "invite already exists" }, 409);
-      const firstMessage = body.firstMessage ? [{
-        id: crypto.randomUUID(),
-        seq: 1,
-        from: body.hostId ?? "host",
-        to: "all" as const,
-        reply_to: null,
-        intent: "room_purpose",
-        priority: "normal",
-        body: body.firstMessage,
-        created_at: new Date().toISOString(),
-      }] : [];
-      const board = wrapInitialBoard(body.initialBoard, body.hostId ?? "host");
-      const validation = validateBoard(body.boardSchema, board);
-      if (validation) return validation;
-      const { initialBoard: _initialBoard, ...stateToStore } = body;
-      await this.state.storage.put(STATE_KEY, { ...stateToStore, nextSeq: firstMessage.length, participants: {}, messages: firstMessage, board } satisfies InviteState);
-      return json({ ok: true });
-    }
+    if (request.method === "POST" && url.pathname === "/__init") return this.handleInit(request);
 
     const invite = await this.getValidInvite();
     if (invite instanceof Response) return invite;
 
-    if (isRoomRoot(url, invite.inviteId) && request.method === "GET" && request.headers.has("authorization")) return this.handleRead(request, invite);
-    if (isRoomRoot(url, invite.inviteId) && request.method === "POST") return this.handleSend(request, invite);
-    if (isRoomRoot(url, invite.inviteId) && request.method === "DELETE") return this.handleClose(request, invite);
-
-    if (url.pathname.match(/\/board\/[^/]+$/) && request.method === "GET") return this.handleGetBoardKey(request, invite, pathLastSegment(url));
-    if (url.pathname.match(/\/board\/[^/]+$/) && request.method === "PUT") return this.handleSetBoardKey(request, invite, pathLastSegment(url));
-    if (url.pathname.match(/\/board\/[^/]+$/) && request.method === "DELETE") return this.handleDeleteBoardKey(request, invite, pathLastSegment(url));
-    if (url.pathname.endsWith("/board") && request.method === "GET") return this.handleGetBoard(request, invite);
-    if (url.pathname.endsWith("/board") && request.method === "PATCH") return this.handlePatchBoard(request, invite);
-
-    if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "PUT") return this.handleJoin(request, invite, pathLastSegment(url));
-    if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "PATCH") return this.handleUpdateParticipant(request, invite, pathLastSegment(url));
-    if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "DELETE") return this.handleDeleteParticipant(request, invite, pathLastSegment(url));
-    if (url.pathname.endsWith("/participants") && request.method === "GET") return this.handleParticipants(request, invite);
-    if (url.pathname.endsWith("/status") && request.method === "GET") return this.handleStatus(request, invite);
-    if (url.pathname.endsWith("/events") && request.method === "GET") return this.handleEvents(request, invite);
+    const routed = this.routeRequest(request, url, invite);
+    if (routed) return routed;
 
     if (request.headers.get("Upgrade") === "websocket") {
       return new Response("WebSocket transport has been removed. Use the collab space.", { status: 410 });
@@ -79,8 +56,75 @@ export class RendezvousSession {
     );
   }
 
+  private async handleInit(request: Request): Promise<Response> {
+    const body = (await request.json()) as InitPayload;
+    const existing = await this.getInvite();
+    if (existing && existing.phase !== "closed") return json({ error: "invite already exists" }, 409);
+    const firstMessage = body.firstMessage ? [createInitialMessage(body)] : [];
+    const board = wrapInitialBoard(body.initialBoard, body.hostId);
+    const validation = validateBoard(body.boardSchema, board);
+    if (validation) return validation;
+    // Strip transient init-only fields before storing
+    const { initialBoard: _ib, firstMessage: _fm, ...stateToStore } = body;
+    await this.state.storage.put(STATE_KEY, { ...stateToStore, nextSeq: firstMessage.length, participants: {}, messages: firstMessage, board } satisfies InviteState);
+    return json({ ok: true });
+  }
+
+  // ── Routing helpers ───────────────────────────────────────────
+
+  private routeRequest(request: Request, url: URL, invite: InviteState): Promise<Response> | undefined {
+    return this.routeRoomRoot(request, url, invite)
+      ?? this.routeRoomExport(request, url, invite)
+      ?? this.routeBoard(request, url, invite)
+      ?? this.routeParticipants(request, url, invite)
+      ?? this.routeRoomMeta(request, url, invite);
+  }
+
+  private routeRoomRoot(request: Request, url: URL, invite: InviteState): Promise<Response> | undefined {
+    if (!isRoomRoot(url, invite.inviteId)) return undefined;
+    if (request.method === "GET" && request.headers.has("authorization")) return this.handleRead(request, invite);
+    if (request.method === "POST") return this.handleSend(request, invite);
+    if (request.method === "DELETE") return this.handleClose(request, invite);
+    return undefined;
+  }
+
+  private routeRoomExport(request: Request, url: URL, invite: InviteState): Promise<Response> | undefined {
+    if (url.pathname.endsWith("/export") && request.method === "GET") return this.handleExport(request, invite);
+    return undefined;
+  }
+
+  private routeBoard(request: Request, url: URL, invite: InviteState): Promise<Response> | undefined {
+    if (url.pathname.endsWith("/board")) {
+      if (request.method === "GET") return this.handleGetBoard(request, invite);
+      if (request.method === "PATCH") return this.handlePatchBoard(request, invite);
+      return undefined;
+    }
+
+    const key = boardKeyFromUrl(url);
+    if (!key) return undefined;
+    if (request.method === "GET") return this.handleGetBoardKey(request, invite, key);
+    if (request.method === "PUT") return this.handleSetBoardKey(request, invite, key);
+    if (request.method === "DELETE") return this.handleDeleteBoardKey(request, invite, key);
+    return undefined;
+  }
+
+  private routeParticipants(request: Request, url: URL, invite: InviteState): Promise<Response> | undefined {
+    if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "PUT") return this.handleJoin(request, invite, pathLastSegment(url));
+    if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "PATCH") return this.handleUpdateParticipant(request, invite, pathLastSegment(url));
+    if (url.pathname.match(/\/participants\/[^/]+$/) && request.method === "DELETE") return this.handleDeleteParticipant(request, invite, pathLastSegment(url));
+    if (url.pathname.endsWith("/participants") && request.method === "GET") return this.handleParticipants(request, invite);
+    return undefined;
+  }
+
+  private routeRoomMeta(request: Request, url: URL, invite: InviteState): Promise<Response> | undefined {
+    if (url.pathname.endsWith("/status") && request.method === "GET") return this.handleStatus(request, invite);
+    if (url.pathname.endsWith("/events") && request.method === "GET") return this.handleEvents(request, invite);
+    return undefined;
+  }
+
   // ── Auth helpers ──────────────────────────────────────────────
 
+  /** Authenticate and return parsed body. Returns error Response on failure. */
   private async authenticate(request: Request, invite: InviteState): Promise<Record<string, unknown> | Response> {
     const body = await readJsonObject(request);
     const auth = await this.authorizeToken(invite, tokenFromRequest(request));
@@ -88,23 +132,57 @@ export class RendezvousSession {
     return body;
   }
 
-  private async authorizeToken(invite: InviteState, token: string | undefined): Promise<Response | undefined> {
-    if (!token) return json({ error: "authorization token is required" }, 401);
-    const tokenHash = await hashJoinSecret(invite.inviteId, token);
-    if (tokenHash !== invite.secretHash) return json({ error: "invalid authorization token" }, 403);
-    return undefined;
-  }
-
-  /**
-   * Authenticate and require a valid participant_id.
-   * Returns body + participantId, or an error Response.
-   */
+  /** Authenticate + require participant_id + verify joined. Returns body and participantId. */
   private async authenticateParticipant(request: Request, invite: InviteState): Promise<{ body: Record<string, unknown>; participantId: string } | Response> {
     const body = await this.authenticate(request, invite);
     if (body instanceof Response) return body;
     const participantId = requireParticipantId(request.headers.get("x-participant-id"));
     if (participantId instanceof Response) return participantId;
     return { body, participantId };
+  }
+
+  /**
+   * Full participant guard: auth + joined check.
+   * Calls fn(body, participantId) only if the participant is authenticated and joined.
+   */
+  private async withJoinedParticipant<T>(
+    request: Request,
+    invite: InviteState,
+    fn: (body: Record<string, unknown>, participantId: string) => Promise<T>,
+  ): Promise<T | Response> {
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    if (!this.isJoined(invite, auth.participantId)) {
+      return json({ error: "participant has not joined" }, 403);
+    }
+    return fn(auth.body, auth.participantId);
+  }
+
+  private async requireHost(request: Request, invite: InviteState, action: string): Promise<true | Response> {
+    const auth = await this.authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    if (auth.participantId !== invite.hostId) return json({ error: `only host can ${action}` }, 403);
+    return true;
+  }
+
+  /**
+   * Auth guard that only requires a valid token (no participant_id needed).
+   */
+  private async withAuth<T>(
+    request: Request,
+    invite: InviteState,
+    fn: (body: Record<string, unknown>) => Promise<T>,
+  ): Promise<T | Response> {
+    const body = await this.authenticate(request, invite);
+    if (body instanceof Response) return body;
+    return fn(body);
+  }
+
+  private async authorizeToken(invite: InviteState, token: string | undefined): Promise<Response | undefined> {
+    if (!token) return json({ error: "authorization token is required" }, 401);
+    const tokenHash = await hashJoinSecret(invite.inviteId, token);
+    if (tokenHash !== invite.secretHash) return json({ error: "invalid authorization token" }, 403);
+    return undefined;
   }
 
   // ── Handlers ──────────────────────────────────────────────────
@@ -115,68 +193,42 @@ export class RendezvousSession {
     const participantId = requireParticipantId(pathParticipantId);
     if (participantId instanceof Response) return participantId;
 
-    const participants = invite.participants ?? {};
-    if (!participants[participantId] && this.activeCount(participants) >= (invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS)) {
-      return json({ error: "room is full", max_participants: invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS }, 409);
-    }
-    if (participants[participantId] && !participants[participantId].left_at) return json({ error: "participant_id already joined" }, 409);
-    const now = new Date().toISOString();
-    const model = normalizeParticipantModel(body.model);
-    if (model instanceof Response) return model;
-    const skills = normalizeParticipantSkills(body.skills);
-    if (skills instanceof Response) return skills;
-    participants[participantId] = { id: participantId, joined_at: now, last_seen_at: now, state: "free", status: "joined", status_updated_at: now, ...(model ? { model } : {}), ...(skills ? { skills } : {}) };
+    const participants = invite.participants;
+    const joinValidation = validateParticipantCanJoin(participants, participantId, invite.maxParticipants);
+    if (joinValidation) return joinValidation;
+    const profile = parseParticipantProfile(body);
+    if (profile instanceof Response) return profile;
+    participants[participantId] = createJoinedParticipant(participantId, profile);
     const updated = { ...invite, phase: "ready", participants } satisfies InviteState;
     await this.state.storage.put(STATE_KEY, updated);
-    return json({ ok: true, room: roomInfo(updated), participant_id: participantId, is_host: participantId === invite.hostId, cursor: invite.nextSeq ?? 0, message: "Joined. Sync with GET room_url?after=N and send with POST room_url." });
+    return json({ ok: true, room: roomInfo(updated), participant_id: participantId, is_host: participantId === invite.hostId, cursor: invite.nextSeq, message: "Joined. Sync with GET room_url?after=N and send with POST room_url." });
   }
 
   private async handleSend(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticateParticipant(request, invite);
-    if (auth instanceof Response) return auth;
-    const { body, participantId } = auth;
+    return this.withJoinedParticipant(request, invite, (body, participantId) => this.sendMessage(body, participantId, invite));
+  }
 
-    if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
-    if (new TextEncoder().encode(JSON.stringify(body.body ?? {})).length > MAX_BODY_BYTES) return json({ error: "message body too large" }, 413);
+  private async sendMessage(body: Record<string, unknown>, participantId: string, invite: InviteState): Promise<Response> {
+    if (ENCODER.encode(JSON.stringify(body.body ?? {})).length > MAX_BODY_BYTES) return json({ error: "message body too large" }, 413);
     const to: Recipient = (body.to as Recipient) ?? "all";
     if (!this.validRecipient(invite, to)) return json({ error: "recipient not joined" }, 404);
-    const seq = (invite.nextSeq ?? 0) + 1;
-    const message: RoomMessage = {
-      id: crypto.randomUUID(),
-      seq,
-      from: participantId,
-      to,
-      reply_to: (body.reply_to as string) ?? null,
-      intent: (body.intent as string) ?? "notify",
-      priority: (body.priority as string) ?? "normal",
-      body: (body.body as unknown) ?? {},
-      created_at: new Date().toISOString(),
-    };
-    const messages = [...(invite.messages ?? []), message].slice(-MAX_MESSAGES);
+    const seq = invite.nextSeq + 1;
+    const message = createRoomMessage(body, participantId, to, seq);
+    const messages = [...invite.messages, message].slice(-MAX_MESSAGES);
     await this.state.storage.put(STATE_KEY, { ...invite, nextSeq: seq, messages } satisfies InviteState);
     this.notifyMessage(message, seq);
     return json({ ok: true, id: message.id, seq });
   }
 
   private async handleRead(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticateParticipant(request, invite);
-    if (auth instanceof Response) return auth;
-    const { body, participantId } = auth;
+    return this.withJoinedParticipant(request, invite, (body, participantId) => this.readMessages(request, body, participantId, invite));
+  }
 
-    if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
-    const after = Number(body.after ?? new URL(request.url).searchParams.get("after") ?? 0);
-    const includeSelf = !!body.include_self || new URL(request.url).searchParams.get("include_self") === "true";
-    const messages = (invite.messages ?? []).filter((msg) => msg.seq > after && (includeSelf || msg.from !== participantId) && this.visibleTo(msg, participantId));
-    const participants = invite.participants ?? {};
-    participants[participantId] = { ...participants[participantId], last_seen_at: new Date().toISOString() };
-    await this.state.storage.put(STATE_KEY, { ...invite, participants } satisfies InviteState);
-    return json({
-      participant_id: participantId,
-      cursor: invite.nextSeq ?? 0,
-      oldest_seq: (invite.messages ?? [])[0]?.seq ?? 0,
-      retention: { max_messages: MAX_MESSAGES },
-      messages,
-    });
+  private async readMessages(request: Request, body: Record<string, unknown>, participantId: string, invite: InviteState): Promise<Response> {
+    const readOptions = parseReadOptions(request, body);
+    const messages = invite.messages.filter((msg) => this.isReadableMessage(msg, participantId, readOptions));
+    await this.touchParticipantLastSeen(invite, participantId);
+    return json(buildReadResponse(invite, participantId, messages));
   }
 
   private async handleEvents(request: Request, invite: InviteState): Promise<Response> {
@@ -195,7 +247,7 @@ export class RendezvousSession {
       start: (controller) => {
         subscriberId = crypto.randomUUID();
         this.eventSubscribers.set(subscriberId, { participantId, controller, includeSelf });
-        enqueueSse(controller, "ready", { participant_id: participantId, last_seq: invite.nextSeq ?? 0 });
+        enqueueSse(controller, "ready", { participant_id: participantId, last_seq: invite.nextSeq });
         interval = setInterval(() => enqueueSse(controller, "ping", { ts: new Date().toISOString() }), SSE_HEARTBEAT_MS);
       },
       cancel: () => {
@@ -213,89 +265,56 @@ export class RendezvousSession {
   }
 
   private async handleParticipants(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticate(request, invite);
-    if (auth instanceof Response) return auth;
-    return json({ room: roomInfo(invite), participants: this.activeParticipants(invite) });
+    return this.withAuth(request, invite, async () =>
+      json({ room: roomInfo(invite), participants: this.activeParticipants(invite) }),
+    );
   }
 
   private async handleGetBoard(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticate(request, invite);
-    if (auth instanceof Response) return auth;
-    return json({ room: roomInfo(invite), board: invite.board ?? {}, board_schema: invite.boardSchema ?? null });
+    return this.withAuth(request, invite, async () => getBoard(invite));
   }
 
   private async handleGetBoardKey(request: Request, invite: InviteState, keyFromPath: string): Promise<Response> {
-    const auth = await this.authenticate(request, invite);
-    if (auth instanceof Response) return auth;
-    const key = normalizeBoardKey(keyFromPath);
-    if (key instanceof Response) return key;
-    const entry = invite.board?.[key];
-    if (!entry) return json({ error: "board key not found" }, 404);
-    return json({ key, entry });
+    return this.withAuth(request, invite, async () => getBoardKey(invite, keyFromPath));
   }
 
   private async handleSetBoardKey(request: Request, invite: InviteState, keyFromPath: string): Promise<Response> {
-    const auth = await this.authenticateParticipant(request, invite);
-    if (auth instanceof Response) return auth;
-    const { body, participantId } = auth;
-    if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
-    const key = normalizeBoardKey(keyFromPath);
-    if (key instanceof Response) return key;
-    const entryResult = makeBoardEntry(body, participantId);
-    if (entryResult instanceof Response) return entryResult;
-    const board = { ...(invite.board ?? {}), [key]: entryResult };
-    const validation = validateBoard(invite.boardSchema, board);
-    if (validation) return validation;
-    await this.state.storage.put(STATE_KEY, { ...invite, board } satisfies InviteState);
-    this.notifyBoard(key, participantId);
-    return json({ ok: true, key, entry: entryResult });
+    return this.withJoinedParticipant(request, invite, async (body, participantId) => {
+      const result = setBoardKey(invite, keyFromPath, body, participantId);
+      if (result instanceof Response) return result;
+      await this.state.storage.put(STATE_KEY, { ...invite, board: result.board } satisfies InviteState);
+      this.notifyBoard(keyFromPath, participantId);
+      return json({ ok: true, key: keyFromPath, entry: result.entry });
+    });
   }
 
   private async handlePatchBoard(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticateParticipant(request, invite);
-    if (auth instanceof Response) return auth;
-    const { body, participantId } = auth;
-    if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
-    const board = { ...(invite.board ?? {}) };
-    const updated: Record<string, BoardEntry> = {};
-    for (const [rawKey, value] of Object.entries(body)) {
-      const key = normalizeBoardKey(rawKey);
-      if (key instanceof Response) return key;
-      const entryResult = makeBoardEntry(value, participantId);
-      if (entryResult instanceof Response) return entryResult;
-      board[key] = entryResult;
-      updated[key] = entryResult;
-    }
-    const validation = validateBoard(invite.boardSchema, board);
-    if (validation) return validation;
-    await this.state.storage.put(STATE_KEY, { ...invite, board } satisfies InviteState);
-    this.notifyBoard(Object.keys(updated), participantId);
-    return json({ ok: true, updated, board });
+    return this.withJoinedParticipant(request, invite, async (body, participantId) => {
+      const result = patchBoard(invite, body, participantId);
+      if (result instanceof Response) return result;
+      await this.state.storage.put(STATE_KEY, { ...invite, board: result.board } satisfies InviteState);
+      this.notifyBoard(Object.keys(result.updated), participantId);
+      return json({ ok: true, updated: result.updated, board: result.board });
+    });
   }
 
   private async handleDeleteBoardKey(request: Request, invite: InviteState, keyFromPath: string): Promise<Response> {
-    const auth = await this.authenticateParticipant(request, invite);
-    if (auth instanceof Response) return auth;
-    const { participantId } = auth;
-    if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
-    const key = normalizeBoardKey(keyFromPath);
-    if (key instanceof Response) return key;
-    const board = { ...(invite.board ?? {}) };
-    delete board[key];
-    const validation = validateBoard(invite.boardSchema, board);
-    if (validation) return validation;
-    await this.state.storage.put(STATE_KEY, { ...invite, board } satisfies InviteState);
-    this.notifyBoard(key, participantId);
-    return json({ ok: true, deleted: key });
+    return this.withJoinedParticipant(request, invite, async (_body, participantId) => {
+      const result = deleteBoardKey(invite, keyFromPath);
+      if (result instanceof Response) return result;
+      await this.state.storage.put(STATE_KEY, { ...invite, board: result.board } satisfies InviteState);
+      this.notifyBoard(result.key, participantId);
+      return json({ ok: true, deleted: result.key });
+    });
   }
 
   private async handleStatus(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticate(request, invite);
-    if (auth instanceof Response) return auth;
-    return json({
-      ...this.buildStatus(invite),
-      closed: invite.phase === "closed",
-    });
+    return this.withAuth(request, invite, async () =>
+      json({
+        ...this.buildStatus(invite),
+        closed: invite.phase === "closed",
+      }),
+    );
   }
 
   private async handleUpdateParticipant(request: Request, invite: InviteState, participantIdFromPath: string): Promise<Response> {
@@ -310,26 +329,11 @@ export class RendezvousSession {
     if (actorId !== participantId && actorId !== invite.hostId) return json({ error: "only participant or host can update participant status" }, 403);
     if (!this.isJoined(invite, participantId)) return json({ error: "participant has not joined" }, 403);
 
-    const state = normalizeParticipantState(body.state);
-    if (state instanceof Response) return state;
-    const status = normalizeParticipantStatus(body.status);
-    if (status instanceof Response) return status;
-    const model = normalizeParticipantModel(body.model);
-    if (model instanceof Response) return model;
-    const skills = normalizeParticipantSkills(body.skills);
-    if (skills instanceof Response) return skills;
+    const profile = parseParticipantProfile(body);
+    if (profile instanceof Response) return profile;
 
-    const now = new Date().toISOString();
     const participants = { ...invite.participants };
-    participants[participantId] = {
-      ...participants[participantId],
-      state: state ?? participants[participantId].state ?? "free",
-      status: status ?? participants[participantId].status ?? "joined",
-      status_updated_at: now,
-      last_seen_at: now,
-      ...(model !== undefined ? { model } : {}),
-      ...(skills !== undefined ? { skills } : {}),
-    };
+    participants[participantId] = updateParticipantProfile(participants[participantId], profile);
     await this.state.storage.put(STATE_KEY, { ...invite, participants } satisfies InviteState);
     return json({ ok: true, participant: participants[participantId] });
   }
@@ -348,13 +352,25 @@ export class RendezvousSession {
   }
 
   private async handleClose(request: Request, invite: InviteState): Promise<Response> {
-    const auth = await this.authenticateParticipant(request, invite);
-    if (auth instanceof Response) return auth;
-    const { participantId: hostId } = auth;
-
-    if (hostId !== invite.hostId) return json({ error: "only host can close room" }, 403);
+    const hostCheck = await this.requireHost(request, invite, "close room");
+    if (hostCheck instanceof Response) return hostCheck;
     await this.state.storage.put(STATE_KEY, { ...invite, phase: "closed" } satisfies InviteState);
     return json({ ok: true, closed: true });
+  }
+
+  private async handleExport(request: Request, invite: InviteState): Promise<Response> {
+    const hostCheck = await this.requireHost(request, invite, "export room");
+    if (hostCheck instanceof Response) return hostCheck;
+    return json({
+      room: roomInfo(invite),
+      phase: invite.phase,
+      participants: invite.participants,
+      messages: invite.messages,
+      board: invite.board,
+      board_schema: invite.boardSchema ?? null,
+      next_seq: invite.nextSeq,
+      expires_at: new Date(invite.expiresAt).toISOString(),
+    });
   }
 
   // ── Domain helpers ────────────────────────────────────────────
@@ -401,27 +417,23 @@ export class RendezvousSession {
     }
   }
 
-  private activeCount(participants: Record<string, Participant>): number {
-    return Object.values(participants).filter((p) => !p.left_at).length;
-  }
-
   private activeParticipants(invite: InviteState): Participant[] {
-    return Object.values(invite.participants ?? {}).filter((p) => !p.left_at);
+    return Object.values(invite.participants).filter((p) => !p.left_at);
   }
 
   private buildStatus(invite: InviteState) {
     return {
       room: roomInfo(invite),
       participants: this.activeParticipants(invite),
-      message_count: invite.messages?.length ?? 0,
-      last_seq: invite.nextSeq ?? 0,
-      oldest_seq: (invite.messages ?? [])[0]?.seq ?? 0,
+      message_count: invite.messages.length,
+      last_seq: invite.nextSeq,
+      oldest_seq: invite.messages[0]?.seq ?? 0,
       expires_at: new Date(invite.expiresAt).toISOString(),
     };
   }
 
   private isJoined(invite: InviteState, participantId: string): boolean {
-    const participant = invite.participants?.[participantId];
+    const participant = invite.participants[participantId];
     return !!participant && !participant.left_at;
   }
 
@@ -429,6 +441,16 @@ export class RendezvousSession {
     if (to === "all") return true;
     const recipients = Array.isArray(to) ? to : [to];
     return recipients.every((id) => this.isJoined(invite, id));
+  }
+
+  private async touchParticipantLastSeen(invite: InviteState, participantId: string): Promise<void> {
+    const participants = { ...invite.participants };
+    participants[participantId] = { ...participants[participantId], last_seen_at: new Date().toISOString() };
+    await this.state.storage.put(STATE_KEY, { ...invite, participants } satisfies InviteState);
+  }
+
+  private isReadableMessage(message: RoomMessage, participantId: string, options: ReadOptions): boolean {
+    return message.seq > options.after && (options.includeSelf || message.from !== participantId) && this.visibleTo(message, participantId);
   }
 
   private visibleTo(message: RoomMessage, participantId: string): boolean {
@@ -457,7 +479,7 @@ export class RendezvousSession {
   private async maybeDeleteEmptyRoom(): Promise<void> {
     const invite = await this.getInvite();
     if (!invite) return;
-    if (!Object.values(invite.participants ?? {}).some((p) => !p.left_at)) {
+    if (!Object.values(invite.participants).some((p) => !p.left_at)) {
       await this.state.storage.deleteAll();
     }
   }
@@ -485,60 +507,116 @@ function pathLastSegment(url: URL): string {
   return decodeURIComponent(url.pathname.split("/").filter(Boolean).at(-1) ?? "");
 }
 
+function boardKeyFromUrl(url: URL): string | undefined {
+  return url.pathname.match(/\/board\/[^/]+$/) ? pathLastSegment(url) : undefined;
+}
+
 function roomInfo(invite: InviteState) {
   return {
     invite_id: invite.inviteId,
-    name: invite.roomName ?? "41d rendezvous",
-    host_id: invite.hostId ?? "host",
-    max_participants: invite.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS,
+    name: invite.roomName,
+    host_id: invite.hostId,
+    max_participants: invite.maxParticipants,
   };
 }
 
-function wrapInitialBoard(initialBoard: Record<string, unknown> | undefined, updatedBy: string): Record<string, BoardEntry> {
-  if (!initialBoard) return {};
-  const board: Record<string, BoardEntry> = {};
-  for (const [rawKey, value] of Object.entries(initialBoard)) {
-    const key = sanitizeId(rawKey).slice(0, 80);
-    if (!key) continue;
-    board[key] = { value, updated_by: updatedBy, updated_at: new Date().toISOString() };
+function parseReadOptions(request: Request, body: Record<string, unknown>): ReadOptions {
+  const url = new URL(request.url);
+  return {
+    after: Number(body.after ?? url.searchParams.get("after") ?? 0),
+    includeSelf: !!body.include_self || url.searchParams.get("include_self") === "true",
+  };
+}
+
+function buildReadResponse(invite: InviteState, participantId: string, messages: RoomMessage[]) {
+  return {
+    participant_id: participantId,
+    cursor: invite.nextSeq,
+    oldest_seq: invite.messages[0]?.seq ?? 0,
+    retention: { max_messages: MAX_MESSAGES },
+    messages,
+  };
+}
+
+function createRoomMessage(body: Record<string, unknown>, participantId: string, to: Recipient, seq: number): RoomMessage {
+  return {
+    id: crypto.randomUUID(),
+    seq,
+    from: participantId,
+    to,
+    reply_to: (body.reply_to as string) ?? null,
+    intent: (body.intent as string) ?? "notify",
+    priority: (body.priority as string) ?? "normal",
+    body: (body.body as unknown) ?? {},
+    created_at: new Date().toISOString(),
+  };
+}
+
+function createInitialMessage(body: InitPayload): RoomMessage {
+  return {
+    id: crypto.randomUUID(),
+    seq: 1,
+    from: body.hostId,
+    to: "all",
+    reply_to: null,
+    intent: "room_purpose",
+    priority: "normal",
+    body: body.firstMessage,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function validateParticipantCanJoin(participants: Record<string, Participant>, participantId: string, maxParticipants: number): Response | undefined {
+  if (participants[participantId] && !participants[participantId].left_at) {
+    return json({ error: "participant_id already joined" }, 409);
   }
-  return board;
-}
-
-function unwrapBoard(board: Record<string, BoardEntry>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(board).map(([key, entry]) => [key, entry.value]));
-}
-
-function validateBoard(schema: Record<string, unknown> | undefined, board: Record<string, BoardEntry>): Response | undefined {
-  if (!schema) return undefined;
-  try {
-    const result = new Validator(schema, "7").validate(unwrapBoard(board));
-    if (result.valid) return undefined;
-    return json({
-      error: "board schema validation failed",
-      issues: result.errors.map((issue) => ({
-        path: issue.instanceLocation.replace(/^#/, "") || "/",
-        message: issue.error,
-        keyword: issue.keyword,
-      })),
-    }, 422);
-  } catch (error) {
-    return json({ error: "invalid board_schema", message: error instanceof Error ? error.message : String(error) }, 400);
+  if (!participants[participantId] && activeParticipantCount(participants) >= maxParticipants) {
+    return json({ error: "room is full", max_participants: maxParticipants }, 409);
   }
+  return undefined;
 }
 
-function normalizeBoardKey(value: unknown): string | Response {
-  const key = typeof value === "string" ? value.trim() : "";
-  if (!key) return json({ error: "board key is required" }, 400);
-  const normalized = sanitizeId(key).slice(0, 80);
-  if (!normalized) return json({ error: "invalid board key" }, 400);
-  return normalized;
+function activeParticipantCount(participants: Record<string, Participant>): number {
+  return Object.values(participants).filter((p) => !p.left_at).length;
 }
 
-function makeBoardEntry(value: unknown, updatedBy: string): BoardEntry | Response {
-  const size = new TextEncoder().encode(JSON.stringify(value ?? null)).length;
-  if (size > MAX_BOARD_VALUE_BYTES) return json({ error: "board value too large", max_bytes: MAX_BOARD_VALUE_BYTES }, 413);
-  return { value: value ?? null, updated_by: updatedBy, updated_at: new Date().toISOString() };
+function parseParticipantProfile(body: Record<string, unknown>): ParticipantProfile | Response {
+  const state = normalizeParticipantState(body.state);
+  if (state instanceof Response) return state;
+  const status = normalizeParticipantStatus(body.status);
+  if (status instanceof Response) return status;
+  const model = normalizeParticipantModel(body.model);
+  if (model instanceof Response) return model;
+  const skills = normalizeParticipantSkills(body.skills);
+  if (skills instanceof Response) return skills;
+  return { state, status, model, skills };
+}
+
+function createJoinedParticipant(participantId: string, profile: ParticipantProfile): Participant {
+  const now = new Date().toISOString();
+  return {
+    id: participantId,
+    joined_at: now,
+    last_seen_at: now,
+    state: "free",
+    status: "joined",
+    status_updated_at: now,
+    ...(profile.model ? { model: profile.model } : {}),
+    ...(profile.skills ? { skills: profile.skills } : {}),
+  };
+}
+
+function updateParticipantProfile(participant: Participant, profile: ParticipantProfile): Participant {
+  const now = new Date().toISOString();
+  return {
+    ...participant,
+    state: profile.state ?? participant.state ?? "free",
+    status: profile.status ?? participant.status ?? "joined",
+    status_updated_at: now,
+    last_seen_at: now,
+    ...(profile.model !== undefined ? { model: profile.model } : {}),
+    ...(profile.skills !== undefined ? { skills: profile.skills } : {}),
+  };
 }
 
 function normalizeParticipantState(value: unknown): "free" | "busy" | undefined | Response {
@@ -578,12 +656,11 @@ function requireParticipantId(value: unknown): string | Response {
 }
 
 function enqueueSse(controller: ReadableStreamDefaultController<Uint8Array>, event: string, data: unknown): void {
-  controller.enqueue(SSE_ENCODER.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+  controller.enqueue(ENCODER.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
 }
 
 function httpRoomUrl(request: Request): string {
   const url = new URL(request.url);
-  url.protocol = url.protocol === "https:" ? "https:" : "http:";
   url.search = "";
   return url.toString();
 }

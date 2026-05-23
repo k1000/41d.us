@@ -1,3 +1,5 @@
+import { marked } from "marked";
+
 const ESCAPE_MAP: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",
@@ -95,6 +97,11 @@ export function respondNegotiated(
   return new Response(html(), {
     headers: { "content-type": "text/html; charset=utf-8" },
   });
+}
+
+export function renderMarkdownPage(title: string, markdown: string, extraHtml?: string): string {
+  const rendered = marked.parse(markdown) as string;
+  return renderPage(title, (extraHtml ? `${extraHtml}\n` : "") + rendered);
 }
 
 export function json(body: unknown, status = 200): Response {

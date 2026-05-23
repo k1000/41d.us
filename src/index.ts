@@ -2,12 +2,12 @@ import { Context, Hono } from "hono";
 import { clientPage, orchestrationMarkdown, sdkMarkdown } from "./client-assets";
 import { DEFAULT_MAX_PARTICIPANTS, INVITE_TTL_MS, MAX_PARTICIPANTS_HARD_LIMIT } from "./constants";
 import { hashJoinSecret, randomBase64Url } from "./crypto";
-import { json, respondNegotiated } from "./format";
+import { respondNegotiated } from "./format";
 import { homeMarkdown, homePage } from "./html";
 import { RendezvousSession } from "./rendezvous";
 import { securityMarkdown, securityPage } from "./security";
 import { skillMarkdown, skillPage } from "./skill";
-import type { Env, InviteState } from "./types";
+import type { Env, InitPayload } from "./types";
 import { sanitizeId } from "./utils";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -68,38 +68,45 @@ app.all("/r/:inviteId/*", (c) => {
 
 app.notFound((c) => c.text("not found", 404));
 
+interface CreateInviteBody {
+  host_id?: string;
+  room_name?: string;
+  max_participants?: number;
+  purpose?: string;
+  first_message?: string | Record<string, unknown>;
+  board_schema?: Record<string, unknown>;
+  board?: Record<string, unknown>;
+}
+
+interface NormalizedInviteRequest {
+  hostId: string;
+  roomName: string;
+  maxParticipants: number;
+  firstMessage?: Record<string, unknown>;
+  boardSchema?: Record<string, unknown>;
+  initialBoard?: Record<string, unknown>;
+}
+
 async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const body = await c.req.json().catch(() => ({})) as { host_id?: string; room_name?: string; max_participants?: number; first_message?: string | Record<string, unknown>; board_schema?: Record<string, unknown>; board?: Record<string, unknown> };
-  const hostId = sanitizeId((body.host_id ?? "host").trim()) || "host";
-  const roomName = typeof body.room_name === "string" && body.room_name.trim() ? body.room_name.trim().slice(0, 80) : "41d rendezvous";
-  const maxParticipants = Math.min(Math.max(Math.trunc(body.max_participants ?? DEFAULT_MAX_PARTICIPANTS), 2), MAX_PARTICIPANTS_HARD_LIMIT);
-  const firstMessage = normalizeFirstMessage(body.first_message, roomName);
+  const body = await c.req.json().catch(() => ({})) as CreateInviteBody;
+  const normalized = normalizeCreateInviteBody(body);
   const inviteId = randomBase64Url(16);
   const joinSecret = randomBase64Url(32);
   const expiresAt = Date.now() + INVITE_TTL_MS;
-  const secretHash = await hashJoinSecret(inviteId, joinSecret);
-
-  const state: InviteState = {
+  const state: InitPayload = {
     inviteId,
-    secretHash,
+    secretHash: await hashJoinSecret(inviteId, joinSecret),
     expiresAt,
     phase: "waiting",
-    hostId,
-    roomName,
-    maxParticipants,
-    ...(firstMessage ? { firstMessage } : {}),
-    ...(body.board_schema && typeof body.board_schema === "object" ? { boardSchema: body.board_schema } : {}),
-    ...(body.board && typeof body.board === "object" ? { initialBoard: body.board } : {}),
+    hostId: normalized.hostId,
+    roomName: normalized.roomName,
+    maxParticipants: normalized.maxParticipants,
+    firstMessage: normalized.firstMessage,
+    boardSchema: normalized.boardSchema,
+    initialBoard: normalized.initialBoard,
   };
 
-  const id = c.env.RENDEZVOUS.idFromName(inviteId);
-  const stub = c.env.RENDEZVOUS.get(id);
-  const initResponse = await stub.fetch("https://rendezvous.internal/__init", {
-    method: "POST",
-    body: JSON.stringify(state),
-    headers: { "content-type": "application/json" },
-  });
-
+  const initResponse = await initInviteState(c, inviteId, state);
   if (!initResponse.ok) {
     return new Response(await initResponse.text(), {
       status: initResponse.status,
@@ -109,38 +116,88 @@ async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Respon
 
   const requestUrl = new URL(c.req.url);
   const roomUrl = `${requestUrl.protocol}//${requestUrl.host}/r/${inviteId}`;
-  const quickstart = buildQuickstart(roomUrl, joinSecret, hostId);
 
-  return c.json({
-    intro: `You are invited by ${hostId} to the "${roomName}" multi-agent 41d.us room. Open room_url, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
-    next_step: "Open room_url and follow the Join now command.",
-    invite_id: inviteId,
-    room: {
-      name: roomName,
-      host_id: hostId,
-      max_participants: maxParticipants,
-      purpose: firstMessage,
-    },
-    join_secret: joinSecret,
-    room_url: roomUrl,
-    board_schema: body.board_schema ?? null,
-    api: {
-      room: roomUrl,
-      join: `${roomUrl}/participants/{participant_id}`,
-      send: roomUrl,
-      read: `${roomUrl}?after=0`,
-      events: `${roomUrl}/events`,
-      board: `${roomUrl}/board`,
-      participants: `${roomUrl}/participants`,
-      status: `${roomUrl}/status`,
-      leave: `${roomUrl}/participants/{participant_id}`,
-      kick: `${roomUrl}/participants/{target_id}`,
-      close: roomUrl,
-    },
-    quickstart,
-    skill: `${requestUrl.protocol}//${requestUrl.host}/skill/SKILL.md`,
-    expires_at: new Date(expiresAt).toISOString(),
+  return c.json(buildInviteResponse({
+    requestUrl,
+    roomUrl,
+    inviteId,
+    joinSecret,
+    expiresAt,
+    ...normalized,
+  }));
+}
+
+function normalizeCreateInviteBody(body: CreateInviteBody): NormalizedInviteRequest {
+  const roomName = normalizeRoomName(body.room_name);
+  return {
+    hostId: normalizeHostId(body.host_id),
+    roomName,
+    maxParticipants: normalizeMaxParticipants(body.max_participants),
+    firstMessage: normalizeFirstMessage(body.first_message ?? body.purpose, roomName),
+    ...(body.board_schema && typeof body.board_schema === "object" ? { boardSchema: body.board_schema } : {}),
+    ...(body.board && typeof body.board === "object" ? { initialBoard: body.board } : {}),
+  };
+}
+
+function normalizeHostId(value: string | undefined): string {
+  return sanitizeId((value ?? "host").trim()) || "host";
+}
+
+function normalizeRoomName(value: string | undefined): string {
+  const roomName = typeof value === "string" ? value.trim() : "";
+  return roomName ? roomName.slice(0, 80) : "41d rendezvous";
+}
+
+function normalizeMaxParticipants(value: number | undefined): number {
+  return Math.min(Math.max(Math.trunc(value ?? DEFAULT_MAX_PARTICIPANTS), 2), MAX_PARTICIPANTS_HARD_LIMIT);
+}
+
+async function initInviteState(c: Context<{ Bindings: Env }>, inviteId: string, state: InitPayload): Promise<Response> {
+  const id = c.env.RENDEZVOUS.idFromName(inviteId);
+  const stub = c.env.RENDEZVOUS.get(id);
+  return stub.fetch("https://rendezvous.internal/__init", {
+    method: "POST",
+    body: JSON.stringify(state),
+    headers: { "content-type": "application/json" },
   });
+}
+
+function buildInviteResponse(args: NormalizedInviteRequest & { requestUrl: URL; roomUrl: string; inviteId: string; joinSecret: string; expiresAt: number }) {
+  return {
+    intro: `You are invited by ${args.hostId} to the "${args.roomName}" multi-agent 41d.us room. Open room_url, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
+    next_step: "Open room_url and follow the Join now command.",
+    invite_id: args.inviteId,
+    room: {
+      name: args.roomName,
+      host_id: args.hostId,
+      max_participants: args.maxParticipants,
+      purpose: args.firstMessage,
+    },
+    join_secret: args.joinSecret,
+    room_url: args.roomUrl,
+    board_schema: args.boardSchema ?? null,
+    api: buildApiLinks(args.roomUrl),
+    quickstart: buildQuickstart(args.roomUrl, args.joinSecret, args.hostId),
+    skill: `${args.requestUrl.protocol}//${args.requestUrl.host}/skill/SKILL.md`,
+    expires_at: new Date(args.expiresAt).toISOString(),
+  };
+}
+
+function buildApiLinks(roomUrl: string) {
+  return {
+    room: roomUrl,
+    join: `${roomUrl}/participants/{participant_id}`,
+    send: roomUrl,
+    read: `${roomUrl}?after=0`,
+    events: `${roomUrl}/events`,
+    board: `${roomUrl}/board`,
+    participants: `${roomUrl}/participants`,
+    status: `${roomUrl}/status`,
+    export: `${roomUrl}/export`,
+    leave: `${roomUrl}/participants/{participant_id}`,
+    kick: `${roomUrl}/participants/{target_id}`,
+    close: roomUrl,
+  };
 }
 
 function buildQuickstart(roomUrl: string, joinSecret: string, defaultName: string) {
