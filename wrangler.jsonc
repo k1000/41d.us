@@ -3,6 +3,13 @@
   "name": "41d-us",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-23",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "41d.us",
+      "custom_domain": true
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
