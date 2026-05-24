@@ -1,0 +1,325 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { MAX_BODY_BYTES } from "../src/constants";
+import { hashJoinSecret } from "@41d/sdk/crypto";
+import type { RoomMessage } from "../src/types";
+import {
+  bootstrapRoom,
+  closeRoom,
+  decodedPayload,
+  deleteParticipant,
+  encryptedPayload,
+  getRoomJson,
+  joinParticipant,
+  readMessages,
+  roomRequest,
+  sendMessage,
+  type RoomFixture,
+} from "./room/helpers";
+
+describe("room lifecycle", () => {
+  let fix: RoomFixture;
+
+  beforeEach(async () => {
+    fix = await bootstrapRoom();
+  });
+
+  it("bootstraps a room via __init (verified by bootstrapRoom)", async () => {
+    const res = await joinParticipant(fix, "check");
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects duplicate __init", async () => {
+    const res = await fix.session.fetch(new Request("https://rendezvous.internal/__init", {
+      method: "POST",
+      body: JSON.stringify({
+        roomId: fix.roomId,
+        secretHash: await hashJoinSecret(fix.roomId, "unused"),
+        expiresAt: Date.now() + 10 * 60 * 1000,
+        phase: "waiting" as const,
+        hostId: "host",
+      }),
+      headers: { "content-type": "application/json" },
+    }));
+    expect(res.status).toBe(409);
+  });
+
+  it("allows a participant to join", async () => {
+    const res = await joinParticipant(fix, "agent-a");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; participant_id: string };
+    expect(body.ok).toBe(true);
+    expect(body.participant_id).toBe("agent-a");
+  });
+
+  it("rejects wrong join secret", async () => {
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/participants/agent-x`, {
+      method: "PUT",
+      headers: { ...fix.joinSecret ? { authorization: "Bearer wrong-secret", "content-type": "application/json" } : {} },
+    }));
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects duplicate participant ID", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await joinParticipant(fix, "agent-a");
+    expect(res.status).toBe(409);
+  });
+
+  it("enforces max_participants", async () => {
+    const smallFix = await bootstrapRoom({ maxParticipants: 2 });
+    await joinParticipant(smallFix, "agent-a");
+    await joinParticipant(smallFix, "agent-b");
+    const res = await joinParticipant(smallFix, "agent-c");
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("room is full");
+  });
+
+  it("allows send and read between participants", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+
+    await sendMessage(fix, "agent-a", "all", { text: "hello from a" });
+    await sendMessage(fix, "agent-b", "all", { text: "hello from b" });
+
+    const res = await readMessages(fix, "agent-a", 1);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { messages: RoomMessage[] };
+    const fromOthers = body.messages.filter((m) => m.from !== "agent-a");
+    expect(fromOthers.length).toBeGreaterThanOrEqual(1);
+    expect(fromOthers.some((m) => decodedPayload<{ text: string }>(m.body).text === "hello from b")).toBe(true);
+  });
+
+  it("delivers direct messages only to the named recipient", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    await joinParticipant(fix, "agent-c");
+
+    await sendMessage(fix, "agent-a", "agent-b", { secret: "for b only" });
+
+    const resB = await readMessages(fix, "agent-b");
+    const resC = await readMessages(fix, "agent-c");
+
+    const bBody = (await resB.json()) as { messages: RoomMessage[] };
+    const cBody = (await resC.json()) as { messages: RoomMessage[] };
+
+    const bGot = bBody.messages.some((m) => m.from === "agent-a" && decodedPayload<{ secret: string }>(m.body).secret === "for b only");
+    const cGot = cBody.messages.some((m) => m.from === "agent-a" && decodedPayload<{ secret: string }>(m.body).secret === "for b only");
+    expect(bGot).toBe(true);
+    expect(cGot).toBe(false);
+  });
+
+  it("rejects send when participant has not joined", async () => {
+    const res = await sendMessage(fix, "ghost", "all", { text: "boo" });
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects unencrypted message bodies", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      method: "POST",
+      headers: { ...fix.joinSecret ? { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" } : {} },
+      body: JSON.stringify({ to: "all", body: { text: "nope" } }),
+    }));
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "message body must be encrypted",
+      hint: expect.stringContaining("/client/41d.js"),
+    });
+  });
+
+  it("accepts SDK-shape encrypted bodies", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      method: "POST",
+      headers: { ...fix.joinSecret ? { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" } : {} },
+      body: JSON.stringify({ to: "all", body: { encrypted: true, ciphertext: "abc", iv: "def" } }),
+    }));
+    expect(res.status).toBe(200);
+  });
+
+  it("accepts plain key.exchange announcements", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      method: "POST",
+      headers: { ...fix.joinSecret ? { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" } : {} },
+      body: JSON.stringify({ to: "all", intent: "key.exchange", body: { public_key: "raw-key" } }),
+    }));
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects message body too large", async () => {
+    await joinParticipant(fix, "agent-a");
+    const bigBody = { text: "x".repeat(MAX_BODY_BYTES + 1) };
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      method: "POST",
+      headers: { ...fix.joinSecret ? { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" } : {} },
+      body: JSON.stringify({ to: "all", body: bigBody }),
+    }));
+    expect(res.status).toBe(413);
+  });
+
+  it("allows participant to leave", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await deleteParticipant(fix, "agent-a");
+    expect(res.status).toBe(200);
+  });
+
+  it("host can kick a participant", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    const res = await deleteParticipant(fix, "agent-b", "host");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; kicked: string };
+    expect(body.kicked).toBe("agent-b");
+  });
+
+  it("non-host cannot kick", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    const res = await deleteParticipant(fix, "agent-a", "agent-b");
+    expect(res.status).toBe(403);
+  });
+
+  it("host can close the room", async () => {
+    const res = await closeRoom(fix);
+    expect(res.status).toBe(200);
+  });
+
+  it("closed room rejects operations", async () => {
+    await closeRoom(fix);
+    const res = await joinParticipant(fix, "late-guest");
+    expect(res.status).toBe(410);
+  });
+
+  it("lists participants", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    const body = await getRoomJson<{ participants: Array<{ id: string }> }>(fix, "/participants");
+    const ids = body.participants.map((p) => p.id).sort();
+    expect(ids).toEqual(["agent-a", "agent-b"]);
+  });
+
+  it("supports participant status update", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/participants/agent-a`, {
+      method: "PATCH",
+      headers: { ...fix.joinSecret ? { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" } : {} },
+      body: JSON.stringify({ state: "busy", status: "working on tests", model: "test-model", skills: ["testing"] }),
+    }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; participant: { state: string; status: string; model: string; skills: string[] } };
+    expect(body.participant.state).toBe("busy");
+    expect(body.participant.status).toBe("working on tests");
+    expect(body.participant.model).toBe("test-model");
+    expect(body.participant.skills).toEqual(["testing"]);
+  });
+
+  it("returns room status", async () => {
+    await joinParticipant(fix, "agent-a");
+    const body = await getRoomJson<{ room: { room_id: string; host_id: string; invite_id?: string }; closed: boolean; message_count: number }>(fix, "/status");
+    expect(body.room.host_id).toBe("host");
+    expect(body.room.room_id).toBe(fix.roomId);
+    expect(body.room.invite_id).toBeUndefined();
+    expect(body.closed).toBe(false);
+  });
+
+  it("allows host to export room state", async () => {
+    await joinParticipant(fix, "agent-a");
+    await sendMessage(fix, "agent-a", "all", { text: "hello" });
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/export`, {
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "host" },
+    }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { room: { host_id: string }; participants: Record<string, unknown>; messages: RoomMessage[]; board: Record<string, unknown>; board_schema: unknown; secretHash?: string };
+    expect(body.room.host_id).toBe("host");
+    expect(body.participants["agent-a"]).toBeDefined();
+    expect(body.messages.some((message) => message.from === "agent-a")).toBe(true);
+    expect(body.board).toEqual({});
+    expect(body.board_schema).toBeNull();
+    expect(body.secretHash).toBeUndefined();
+  });
+
+  it("rejects non-host room export", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/export`, {
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a" },
+    }));
+    expect(res.status).toBe(403);
+  });
+
+  it("returns the invite instructions page when unauthenticated", async () => {
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`));
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("41d.us invite");
+  });
+
+  it("read returns messages and advances cursor with include_self", async () => {
+    await joinParticipant(fix, "agent-a");
+    await sendMessage(fix, "agent-a", "all", { text: "msg1" });
+    await sendMessage(fix, "agent-a", "all", { text: "msg2" });
+
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}?after=0&include_self=true`, {
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a" },
+    }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { messages: RoomMessage[]; cursor: number };
+    expect(body.messages.length).toBeGreaterThanOrEqual(2);
+    expect(body.cursor).toBeGreaterThanOrEqual(2);
+
+    const res2 = await readMessages(fix, "agent-a", body.cursor);
+    const body2 = (await res2.json()) as { messages: RoomMessage[] };
+    expect(body2.messages.length).toBe(0);
+  });
+
+  it("tracks read state per participant for recent and all message reads", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    await sendMessage(fix, "agent-a", "all", { text: "first" });
+
+    const firstRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-b" },
+    }));
+    const firstBody = (await firstRead.json()) as { mode: string; messages: RoomMessage[] };
+    expect(firstBody.mode).toBe("recent");
+    expect(firstBody.messages.some((m) => decodedPayload<{ text?: string }>(m.body).text === "first")).toBe(true);
+
+    const secondRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-b" },
+    }));
+    const secondBody = (await secondRead.json()) as { messages: RoomMessage[] };
+    expect(secondBody.messages.length).toBe(0);
+
+    await sendMessage(fix, "agent-a", "all", { text: "second" });
+    const recentRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-b" },
+    }));
+    const recentBody = (await recentRead.json()) as { messages: RoomMessage[] };
+    expect(recentBody.messages.map((m) => decodedPayload<{ text?: string }>(m.body).text)).toEqual(["second"]);
+
+    const allRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}?view=all`, {
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-b" },
+    }));
+    const allBody = (await allRead.json()) as { mode: string; messages: RoomMessage[] };
+    expect(allBody.mode).toBe("all");
+    expect(allBody.messages.map((m) => decodedPayload<{ text?: string }>(m.body).text)).toEqual(["first", "second"]);
+  });
+
+  it("read markers are isolated per participant", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    await joinParticipant(fix, "agent-c");
+    await sendMessage(fix, "agent-a", "all", { text: "shared" });
+
+    await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-b" },
+    }));
+
+    const cRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-c" },
+    }));
+    const cBody = (await cRead.json()) as { messages: RoomMessage[] };
+    expect(cBody.messages.some((m) => decodedPayload<{ text?: string }>(m.body).text === "shared")).toBe(true);
+  });
+});

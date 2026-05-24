@@ -1,0 +1,27 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "41d-us",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-23",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "41d.us",
+      "custom_domain": true
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "RENDEZVOUS",
+        "class_name": "RendezvousSession"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RendezvousSession"]
+    }
+  ]
+}

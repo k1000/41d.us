@@ -4,12 +4,18 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "wrangler dev --config apps/web/wrangler.jsonc",
+    "deploy": "wrangler deploy --config apps/web/wrangler.jsonc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:lifecycle": "vitest run apps/web/test/room-lifecycle.test.ts apps/web/test/board.test.ts",
+    "test:crypto": "vitest run apps/web/test/crypto-primitives.test.ts apps/web/test/sdk-crypto-session.test.ts",
+    "test:pages": "vitest run apps/web/test/pages.test.ts apps/web/test/invite.test.ts",
+    "test:sdk": "vitest run apps/web/test/sdk-http-client.test.ts",
+    "test:smoke": "vitest run apps/web/test/basic.test.ts"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",

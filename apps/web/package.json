@@ -1,0 +1,12 @@
+{
+  "name": "@41d/web",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@41d/sdk": "workspace:*",
+    "@41d/helper": "workspace:*",
+    "@41d/skill": "workspace:*"
+  }
+}

@@ -1,0 +1,125 @@
+import { describe, expect, it } from "vitest";
+import { createInvite, joinRoom, resumeRoom, type Invite } from "@41d/sdk";
+
+describe("SDK HTTP client", () => {
+  const makeInvite = (): Invite => ({
+    intro: "intro",
+    next_step: "join",
+    room_id: "invite",
+    room: { name: "room", host_id: "host", max_participants: 2 },
+    join_secret: "secret",
+    room_url: "https://41d.us/r/invite",
+    api: {
+      join: "https://41d.us/r/invite/participants/{participant_id}",
+      send: "https://41d.us/r/invite",
+      read: "https://41d.us/r/invite",
+      read_all: "https://41d.us/r/invite?view=all",
+      events: "https://41d.us/r/invite/events",
+      board: "https://41d.us/r/invite/board",
+      participants: "https://41d.us/r/invite/participants",
+      status: "https://41d.us/r/invite/status",
+      leave: "https://41d.us/r/invite/participants/{participant_id}",
+      kick: "https://41d.us/r/invite/participants/{target_id}",
+      close: "https://41d.us/r/invite",
+      export: "https://41d.us/r/invite/export",
+    },
+    skill: "https://41d.us/skill/SKILL.md",
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+  });
+
+  it("creates invites with normalized request keys", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody: unknown;
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        intro: "intro",
+        next_step: "join",
+        room_id: "invite",
+        room: { name: "room", host_id: "host", max_participants: 2 },
+        join_secret: "secret",
+        room_url: "https://41d.us/r/invite",
+        api: {},
+        skill: "https://41d.us/skill/SKILL.md",
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }), { headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+
+    try {
+      await createInvite("https://41d.us/", { roomId: "room-1", hostId: "agent-a", roomName: "room", maxParticipants: 3, purpose: "test" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requestBody).toMatchObject({ room_id: "room-1", host_id: "agent-a", room_name: "room", max_participants: 3, purpose: "test" });
+  });
+
+  it("sends falsy JSON bodies", async () => {
+    const invite = makeInvite();
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      return new Response(JSON.stringify({ ok: true, cursor: 0 }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const room = await joinRoom(invite, "agent-a");
+      await room.setBoardKey("enabled", false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requests[1].init?.headers).toMatchObject({ "content-type": "application/json" });
+    expect(requests[1].init?.body).toBe("false");
+  });
+
+  it("sets view=all param when reading retained history", async () => {
+    const invite = makeInvite();
+    const originalFetch = globalThis.fetch;
+    const requests: string[] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      return new Response(JSON.stringify({ cursor: 0, messages: [] }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const room = await joinRoom(invite, "agent-a");
+      requests.length = 0;
+      await room.read({ all: true });
+      await room.read();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requests[0]).toBe("https://41d.us/r/invite?view=all");
+    expect(requests[1]).toBe("https://41d.us/r/invite");
+  });
+
+  it("resumeRoom skips the join PUT but builds a working client", async () => {
+    const invite = makeInvite();
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), method: init?.method ?? "GET" });
+      return new Response(JSON.stringify({ cursor: 0, messages: [] }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const room = await resumeRoom(invite, "agent-a");
+      expect(room.participantId).toBe("agent-a");
+      expect(room.cursor).toBe(0);
+      await room.read();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requests.some((r) => r.method === "PUT")).toBe(false);
+  });
+});
