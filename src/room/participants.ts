@@ -46,6 +46,7 @@ export function createJoinedParticipant(participantId: string, profile: Particip
     id: participantId,
     joined_at: now,
     last_seen_at: now,
+    last_read_seq: 0,
     state: "free",
     status: "joined",
     status_updated_at: now,
@@ -70,6 +71,19 @@ function updateParticipantProfile(participant: Participant, profile: Participant
 export function withUpdatedParticipant(invite: InviteState, participantId: string, profile: ParticipantProfile): InviteState {
   const participants = { ...invite.participants };
   participants[participantId] = updateParticipantProfile(participants[participantId], profile);
+  return { ...invite, participants } satisfies InviteState;
+}
+
+export function withReadReceipt(invite: InviteState, participantId: string, seq: number): InviteState {
+  const participant = invite.participants[participantId];
+  if (!participant) return invite;
+  const now = new Date().toISOString();
+  const participants = { ...invite.participants };
+  participants[participantId] = {
+    ...participant,
+    last_seen_at: now,
+    last_read_seq: Math.max(participant.last_read_seq, seq),
+  };
   return { ...invite, participants } satisfies InviteState;
 }
 

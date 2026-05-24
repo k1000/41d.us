@@ -24,6 +24,7 @@ export interface Participant {
   id: string;
   joined_at: string;
   last_seen_at: string;
+  last_read_seq: number;
   state: ParticipantState;
   status: string;
   status_updated_at: string;

@@ -14,6 +14,7 @@ export interface Invite {
     join: string;
     send: string;
     read: string;
+    read_all: string;
     events: string;
     board: string;
     participants: string;
@@ -55,11 +56,11 @@ export interface RoomClient {
   send(to: Recipient, body: unknown, options?: { replyTo?: string | null; intent?: string; priority?: string; plain?: boolean }): Promise<{ ok: true; id: string; seq: number }>;
 
   /**
-   * Read messages since last cursor. Encrypted messages are automatically
-   * decrypted. Key exchange messages are processed to build the peer key
-   * directory.
+   * Read recent messages. The server tracks each participant's read marker.
+   * Encrypted messages are automatically decrypted. Key exchange messages are
+   * processed to build the peer key directory.
    */
-  read(options?: { includeSelf?: boolean }): Promise<RoomMessage[]>;
+  read(options?: { includeSelf?: boolean; all?: boolean }): Promise<RoomMessage[]>;
 
   participants(): Promise<unknown>;
   updateStatus(state: "free" | "busy", status: string, options?: { model?: string; skills?: string[] }): Promise<unknown>;
@@ -136,7 +137,7 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
 
     async read(options = {}) {
       const url = new URL(invite.room_url);
-      url.searchParams.set("after", String(cursor));
+      if (options.all) url.searchParams.set("view", "all");
       if (options.includeSelf) url.searchParams.set("include_self", "true");
       const result = await request<{ cursor: number; messages: RoomMessage[] }>(url.toString(), invite, { participantId });
       cursor = result.cursor;

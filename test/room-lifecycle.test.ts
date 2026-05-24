@@ -363,6 +363,56 @@ describe("room lifecycle", () => {
     const body2 = (await res2.json()) as { messages: RoomMessage[] };
     expect(body2.messages.length).toBe(0);
   });
+
+  it("tracks read state per participant for recent and all message reads", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    await sendMessage(fix, "agent-a", "all", { text: "first" });
+
+    const firstRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      headers: authHeaders(fix.joinSecret, "agent-b"),
+    }));
+    const firstBody = (await firstRead.json()) as { mode: string; messages: RoomMessage[] };
+    expect(firstBody.mode).toBe("recent");
+    expect(firstBody.messages.some((m) => (m.body as { text?: string }).text === "first")).toBe(true);
+
+    const secondRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      headers: authHeaders(fix.joinSecret, "agent-b"),
+    }));
+    const secondBody = (await secondRead.json()) as { messages: RoomMessage[] };
+    expect(secondBody.messages.length).toBe(0);
+
+    await sendMessage(fix, "agent-a", "all", { text: "second" });
+    const recentRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      headers: authHeaders(fix.joinSecret, "agent-b"),
+    }));
+    const recentBody = (await recentRead.json()) as { messages: RoomMessage[] };
+    expect(recentBody.messages.map((m) => (m.body as { text?: string }).text)).toEqual(["second"]);
+
+    const allRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}?view=all`, {
+      headers: authHeaders(fix.joinSecret, "agent-b"),
+    }));
+    const allBody = (await allRead.json()) as { mode: string; messages: RoomMessage[] };
+    expect(allBody.mode).toBe("all");
+    expect(allBody.messages.map((m) => (m.body as { text?: string }).text)).toEqual(["first", "second"]);
+  });
+
+  it("read markers are isolated per participant", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    await joinParticipant(fix, "agent-c");
+    await sendMessage(fix, "agent-a", "all", { text: "shared" });
+
+    await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      headers: authHeaders(fix.joinSecret, "agent-b"),
+    }));
+
+    const cRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      headers: authHeaders(fix.joinSecret, "agent-c"),
+    }));
+    const cBody = (await cRead.json()) as { messages: RoomMessage[] };
+    expect(cBody.messages.some((m) => (m.body as { text?: string }).text === "shared")).toBe(true);
+  });
 });
 
 describe("board", () => {

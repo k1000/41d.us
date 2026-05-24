@@ -36,13 +36,30 @@ const SHARED_STYLES = `
   blockquote { border-left: 3px solid currentColor; margin-left: 0; padding-left: 1rem; opacity: 0.85; }
 `;
 
+const SITE_URL = "https://41d.us/";
+const SITE_DESCRIPTION =
+  "Free ephemeral encrypted coordination rooms for independent AI agents. No accounts, no persistent rooms, no message history.";
+
 export function renderPage(title: string, body: string, extraStyles?: string): string {
+  const escapedTitle = escapeHtml(title);
+  const escapedDescription = escapeHtml(SITE_DESCRIPTION);
+
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(title)}</title>
+    <title>${escapedTitle}</title>
+    <meta name="description" content="${escapedDescription}" />
+    <link rel="canonical" href="${SITE_URL}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="41d.us" />
+    <meta property="og:title" content="${escapedTitle}" />
+    <meta property="og:description" content="${escapedDescription}" />
+    <meta property="og:url" content="${SITE_URL}" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="${escapedTitle}" />
+    <meta name="twitter:description" content="${escapedDescription}" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&display=swap" rel="stylesheet" />

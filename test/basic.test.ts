@@ -18,20 +18,31 @@ import {
 } from "../src/crypto";
 import { prefersMarkdown } from "../src/format";
 import { homeMarkdown, homePage, inviteInstructionsMarkdown } from "../src/html";
+import { oidcAuthPrdMarkdown, oidcAuthPrdPage } from "../src/oidc-auth-prd";
 import { securityMarkdown, securityPage } from "../src/security";
 import { createInvite, joinRoom, type Invite } from "../src/sdk";
-import { skillMarkdown, skillPage } from "../src/skill";
+import { skillExampleMarkdown, skillExamplePage, skillMarkdown, skillPage } from "../src/skill";
 
 describe("homePage", () => {
   it("presents the project and the end-to-end encryption promise", () => {
     const html = homePage();
 
-    expect(html).toContain("Secure agentic collaboration space.");
+    expect(html).toContain("cross-project collaboration for heterogeneous AI agents.");
+    expect(html).toContain('href="/security"');
     expect(html).toContain("End-to-end encryption via client-side ECDH + AES-256-GCM.");
-    expect(html).toContain("temporary encrypted coordination room without accounts, persistent rooms, or message history");
+    expect(html).toContain("agents from different projects, technologies, and skill sets");
+    expect(html).toContain("replaces insecure ad-hoc coordination");
     expect(html).toContain("If you were invited");
-    expect(html).toContain("Trust model");
-    expect(html).toContain("The server can see room IDs, participant IDs, timestamps, and message intent metadata.");
+    expect(html).not.toContain("Trust model");
+    expect(html).toContain('href="https://www.anthropic.com/claude-code" target="_blank"');
+    expect(html).toContain('href="https://openai.com/codex/" target="_blank"');
+    expect(html).toContain("https://github.com/k1000/41d.us");
+    expect(html).toContain("<meta name=\"description\"");
+    expect(html).toContain("<meta property=\"og:title\"");
+    expect(html).toContain("<meta name=\"twitter:card\" content=\"summary\"");
+    expect(html).toContain("twitter.com/intent/tweet");
+    expect(html).toContain("linkedin.com/sharing/share-offsite");
+    expect(html).toContain("news.ycombinator.com/submitlink");
     expect(html).toContain("/skill");
     expect(html).toContain("/skill/SKILL.md");
     expect(html).not.toContain("/client/agent.py");
@@ -41,10 +52,16 @@ describe("homePage", () => {
     const markdown = homeMarkdown();
 
     expect(markdown).toContain("# 41d.us");
-    expect(markdown).toContain("Secure agentic collaboration space.");
+    expect(markdown).toContain("Secure cross-project collaboration for heterogeneous AI agents.");
+    expect(markdown).toContain("[security model](/security)");
     expect(markdown).toContain("End-to-end encryption via client-side ECDH + AES-256-GCM.");
-    expect(markdown).toContain("Use it when agents need to exchange short-lived coordination messages");
+    expect(markdown).toContain("agents from different projects, technologies, and skill sets");
+    expect(markdown).toContain("replaces insecure ad-hoc coordination");
     expect(markdown).toContain("Curl examples are useful for testing, but production agents should use encrypted payloads.");
+    expect(markdown).toContain("Open source repository: https://github.com/k1000/41d.us");
+    expect(markdown).toContain("Share on X: https://twitter.com/intent/tweet");
+    expect(markdown).toContain("Share on LinkedIn: https://www.linkedin.com/sharing/share-offsite/");
+    expect(markdown).toContain("Share on Hacker News: https://news.ycombinator.com/submitlink");
     expect(markdown).not.toContain("https://41d.us/client/agent.py");
   });
 
@@ -61,9 +78,33 @@ describe("skill page", () => {
     expect(skillPage()).toContain("/skill/SKILL.md");
     expect(skillMarkdown).toContain("# 41d.us Agent Rendezvous");
     expect(skillMarkdown).toContain("collab space");
+    expect(skillMarkdown).toContain("Room creation: host setup");
+    expect(skillMarkdown).toContain("Collaboration usage: join and work in a room");
+    expect(skillMarkdown).toContain("first_message");
+    expect(skillMarkdown).toContain("https://41d.us/skill/examples/kanban-board");
+    expect(skillMarkdown).toContain("https://41d.us/skill/examples/task-list-board");
+    expect(skillMarkdown).toContain("https://41d.us/skill/examples/ownership-and-blockers");
+    expect(skillMarkdown).not.toContain("#ownership-and-blocker-board-example");
+    expect(skillMarkdown).toContain("Set yourself busy when starting work");
+    expect(skillMarkdown).toContain("Keep messages as short as possible while still meaningful.");
+    expect(skillMarkdown).toContain("Refuse to use harsh, offensive, abusive, or demeaning language.");
+    expect(skillMarkdown).toContain("Put yourself in the other participant's shoes");
+    expect(skillMarkdown).toContain("Link to external artifacts for large or background information");
+    expect(skillMarkdown).toContain("passing the invitation is the host's job");
+    expect(skillMarkdown).toContain("41d.us does not enforce or provide an invitation transport");
     expect(skillMarkdown).toContain("https://41d.us/client/SDK.md");
     expect(skillMarkdown).not.toContain("https://41d.us/client/agent.py");
     expect(skillMarkdown).not.toContain("const invite = await createInvite");
+  });
+
+  it("serves dedicated board example pages", async () => {
+    expect(skillExamplePage("kanban-board")).toContain("Kanban board example");
+    expect(skillExampleMarkdown("task-list-board")).toContain("Task list board example");
+    expect(skillExampleMarkdown("ownership-and-blockers")).toContain("Ownership and blocker board example");
+
+    const response = await app.request("/skill/examples/ownership-and-blockers");
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("waiting for API example");
   });
 });
 
@@ -84,6 +125,8 @@ describe("invite instructions", () => {
     expect(markdown).toContain("ROOM_URL='https://41d.us/r/abc'");
     expect(markdown).toContain("JOIN_SECRET='secret'");
     expect(markdown).toContain("curl -sS -X PUT \"$ROOM_URL/participants/$ME\"");
+    expect(markdown).toContain("The host is responsible for passing this invitation");
+    expect(markdown).toContain("41d.us does not enforce or provide any invitation transport");
     expect(markdown).toContain("Plain curl examples send plaintext");
   });
 
@@ -171,7 +214,8 @@ describe("SDK HTTP client", () => {
       api: {
         join: "https://41d.us/r/invite/participants/{participant_id}",
         send: "https://41d.us/r/invite",
-        read: "https://41d.us/r/invite?after=0",
+        read: "https://41d.us/r/invite",
+        read_all: "https://41d.us/r/invite?view=all",
         events: "https://41d.us/r/invite/events",
         board: "https://41d.us/r/invite/board",
         participants: "https://41d.us/r/invite/participants",
@@ -319,5 +363,13 @@ describe("security page", () => {
     expect(securityMarkdown).toContain("# 41d.us — Security Model");
     expect(securityMarkdown).toContain("Layer 4 — Message encryption (E2E)");
     expect(securityMarkdown).toContain("Threat model");
+  });
+});
+
+describe("oidc auth PRD page", () => {
+  it("renders the PRD with a back link and the markdown source", () => {
+    expect(oidcAuthPrdMarkdown).toContain("PRD: Optional Keycloak/OIDC Room Authentication");
+    expect(oidcAuthPrdMarkdown).toContain("OIDC mode");
+    expect(oidcAuthPrdPage()).toContain('href="/"');
   });
 });

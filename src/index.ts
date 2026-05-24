@@ -4,9 +4,10 @@ import { DEFAULT_MAX_PARTICIPANTS, INVITE_TTL_MS, MAX_PARTICIPANTS_HARD_LIMIT } 
 import { hashJoinSecret, randomBase64Url } from "./crypto";
 import { respondNegotiated } from "./format";
 import { homeMarkdown, homePage } from "./html";
+import { oidcAuthPrdMarkdown, oidcAuthPrdPage } from "./oidc-auth-prd";
 import { RendezvousSession } from "./rendezvous";
 import { securityMarkdown, securityPage } from "./security";
-import { skillMarkdown, skillPage } from "./skill";
+import { skillExampleMarkdown, skillExamplePage, skillMarkdown, skillPage } from "./skill";
 import type { Env, InitPayload } from "./types";
 import { sanitizeId } from "./utils";
 
@@ -18,6 +19,15 @@ app.get("/", (c) =>
 
 app.get("/security", (c) => respondNegotiated(c.req.raw, securityPage, () => securityMarkdown));
 
+app.get("/prd/oidc-auth", (c) => respondNegotiated(c.req.raw, oidcAuthPrdPage, () => oidcAuthPrdMarkdown));
+
+app.get("/prd/OIDC-AUTH.md", (c) =>
+  c.body(oidcAuthPrdMarkdown, 200, {
+    "content-type": "text/markdown; charset=utf-8",
+    "content-disposition": 'inline; filename="OIDC-AUTH.md"',
+  }),
+);
+
 app.get("/security/SECURITY.md", (c) =>
   c.body(securityMarkdown, 200, {
     "content-type": "text/markdown; charset=utf-8",
@@ -26,6 +36,25 @@ app.get("/security/SECURITY.md", (c) =>
 );
 
 app.get("/skill", (c) => c.html(skillPage()));
+
+app.get("/skill/examples/*", (c) => {
+  const rawSlug = new URL(c.req.url).pathname.split("/").pop() ?? "";
+  const wantsMarkdown = rawSlug.endsWith(".md");
+  const slug = wantsMarkdown ? rawSlug.slice(0, -3) : rawSlug;
+
+  if (wantsMarkdown) {
+    const markdown = skillExampleMarkdown(slug);
+    if (!markdown) return c.text("not found", 404);
+    return c.body(markdown, 200, {
+      "content-type": "text/markdown; charset=utf-8",
+      "content-disposition": `inline; filename="${slug}.md"`,
+    });
+  }
+
+  const page = skillExamplePage(slug);
+  if (!page) return c.text("not found", 404);
+  return c.html(page);
+});
 
 app.get("/client", (c) => c.html(clientPage()));
 
@@ -188,7 +217,8 @@ function buildApiLinks(roomUrl: string) {
     room: roomUrl,
     join: `${roomUrl}/participants/{participant_id}`,
     send: roomUrl,
-    read: `${roomUrl}?after=0`,
+    read: roomUrl,
+    read_all: `${roomUrl}?view=all`,
     events: `${roomUrl}/events`,
     board: `${roomUrl}/board`,
     participants: `${roomUrl}/participants`,
@@ -206,7 +236,8 @@ function buildQuickstart(roomUrl: string, joinSecret: string, defaultName: strin
     join: `curl -sS -X PUT '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"model":"your-model","skills":["typescript","review"]}'`,
     set_busy: `curl -sS -X PATCH '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"state":"busy","status":"Working on the room task","model":"your-model","skills":["typescript","review"]}'`,
     set_free: `curl -sS -X PATCH '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"state":"free","status":"Available"}'`,
-    read: `curl -sS '${roomUrl}?after=0' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
+    read_recent: `curl -sS '${roomUrl}' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
+    read_all: `curl -sS '${roomUrl}?view=all' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
     send: `curl -sS -X POST '${roomUrl}' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}' -H 'content-type: application/json' -d '{"to":"all","body":{"demo_plaintext":true,"text":"hello"}}'`,
     events: `curl -N '${roomUrl}/events' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
     board_read: `curl -sS '${roomUrl}/board' -H 'authorization: Bearer ${joinSecret}'`,

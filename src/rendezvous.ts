@@ -6,7 +6,7 @@ import { RoomEvents } from "./room/events";
 import { roomExport, roomInfo, roomStatus } from "./room/info";
 import { buildInitialInviteState } from "./room/lifecycle";
 import { buildReadResponse, createSentMessage, isReadableMessage, parseReadOptions } from "./room/messages";
-import { activeParticipants, isParticipantJoined } from "./room/participants";
+import { activeParticipants, isParticipantJoined, withReadReceipt } from "./room/participants";
 import { RoomParticipantController } from "./room/participant-controller";
 import { routeRoomRequest } from "./room/router";
 import { RoomStorage } from "./room/storage";
@@ -94,10 +94,11 @@ export class RendezvousSession {
   }
 
   private async readMessages(request: Request, body: Record<string, unknown>, participantId: string, invite: InviteState): Promise<Response> {
-    const readOptions = parseReadOptions(request, body);
+    const readOptions = parseReadOptions(request, body, invite, participantId);
     const messages = invite.messages.filter((msg) => isReadableMessage(msg, participantId, readOptions));
-    await this.storage.touchParticipantLastSeen(invite, participantId);
-    return json(buildReadResponse(invite, participantId, messages));
+    const updated = withReadReceipt(invite, participantId, invite.nextSeq);
+    await this.storage.putInvite(updated);
+    return json(buildReadResponse(updated, participantId, messages, readOptions));
   }
 
   private async handleEvents(request: Request, invite: InviteState): Promise<Response> {

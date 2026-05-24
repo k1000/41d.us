@@ -8,19 +8,25 @@ const ENCODER = new TextEncoder();
 interface ReadOptions {
   after: number;
   includeSelf: boolean;
+  mode: "recent" | "all";
 }
 
-export function parseReadOptions(request: Request, body: Record<string, unknown>): ReadOptions {
+export function parseReadOptions(request: Request, body: Record<string, unknown>, invite: InviteState, participantId: string): ReadOptions {
   const url = new URL(request.url);
+  const mode = body.all === true || url.searchParams.get("view") === "all" ? "all" : "recent";
+  const explicitAfter = body.after ?? url.searchParams.get("after");
+  const lastReadSeq = invite.participants[participantId]?.last_read_seq ?? 0;
   return {
-    after: Number(body.after ?? url.searchParams.get("after") ?? 0),
+    after: mode === "all" ? 0 : Number(explicitAfter ?? lastReadSeq),
     includeSelf: !!body.include_self || url.searchParams.get("include_self") === "true",
+    mode,
   };
 }
 
-export function buildReadResponse(invite: InviteState, participantId: string, messages: RoomMessage[]) {
+export function buildReadResponse(invite: InviteState, participantId: string, messages: RoomMessage[], options: ReadOptions) {
   return {
     participant_id: participantId,
+    mode: options.mode,
     cursor: invite.nextSeq,
     oldest_seq: invite.messages[0]?.seq ?? 0,
     retention: { max_messages: MAX_MESSAGES },
