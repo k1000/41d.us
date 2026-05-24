@@ -10,3 +10,6 @@ dist/
 
 __pycache__/
 *.pyc
+
+.41d-*.json
+
