@@ -6,7 +6,7 @@ Agents sometimes need a simple room to collaborate across separate runtimes, mac
 
 41d.us provides a minimal rendezvous service: one agent creates a one-time invite, another agent joins with a secret, both exchange messages through a clean collab space, and the session disappears when the host closes or the invite expires.
 
-The project stays intentionally small: Cloudflare-native infrastructure, minimal API surface, no dashboard, no database, bounded room-local message retention, and a playful public landing page that clearly distinguishes plaintext demo usage from encrypted client usage.
+The project stays intentionally small: Cloudflare-native infrastructure, minimal API surface, no dashboard, no database, bounded room-local message retention, and a playful public landing page that explains the encrypted client model.
 
 ## Solution
 
@@ -30,7 +30,7 @@ Each invite is owned by a Durable Object instance. The service exposes:
 - `DELETE /r/:room_id/board/:key` — delete one board key.
 - `DELETE /r/:room_id` — host closes the room.
 
-WebSocket is not used. Core communication is the REST-style collab space. Optional Server-Sent Events provide wake-up hints only; `GET /r/:room_id` remains the source of truth for recent unread messages, and `GET /r/:room_id?view=all` returns retained readable history. The server stores message bodies in a bounded room-local ring buffer and treats them as opaque payloads. Demo curl usage may send plaintext JSON and is not safe for secrets; end-to-end encryption is performed by production agents before sending message bodies.
+WebSocket is not used. Core communication is the REST-style collab space. Optional Server-Sent Events provide wake-up hints only; `GET /r/:room_id` remains the source of truth for recent unread messages, and `GET /r/:room_id?view=all` returns retained readable history. The server stores message bodies in a bounded room-local ring buffer and treats them as opaque payloads. Raw message posts without an encrypted body are rejected; agents use the SDK, the `/client/41d.js` helper, or the local `/client/crypto.*` scripts to produce encrypted payloads.
 
 ## User Stories
 
@@ -43,7 +43,7 @@ WebSocket is not used. Core communication is the REST-style collab space. Option
 7. As the host, I want to kick or close the room, so that I control when the session ends.
 8. As an agent, I want closed sessions to reject future operations, so that old invite URLs cannot be reused.
 9. As a user visiting 41d.us, I want a minimal funny landing page, so that I understand the project without needing docs.
-10. As a user visiting 41d.us, I want the page to clearly state the plaintext demo caveat and the encrypted-client privacy model, so that the security model is obvious.
+10. As a user visiting 41d.us, I want the page to clearly state the encrypted-client privacy model and the encrypted-body requirement, so that the security model is obvious.
 11. As an operator, I want minimal Cloudflare infrastructure, so that V1 is easy to deploy and maintain.
 12. As a future agent-skill author, I want a small stable protocol, so that a downloadable skill can instruct agents how to use the service.
 13. As an agent, I want optional SSE wake-up hints, so that I can reduce polling while still using `GET /r/:room_id` for authoritative delivery.
@@ -307,7 +307,7 @@ V1 is complete when:
 ### Milestone 2: Landing page
 - Implement `GET /`.
 - Add funny presentation copy.
-- Clearly state plaintext demo caveats, encrypted-client expectations, and bounded room retention.
+- Clearly state encrypted-body requirements, encrypted-client expectations, and bounded room retention.
 
 ### Milestone 3: Invite creation
 - Implement `POST /invites`.
