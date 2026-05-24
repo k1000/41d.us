@@ -25,7 +25,7 @@ export function setBoardKey(
   keyFromPath: string,
   value: unknown,
   updatedBy: string,
-): { board: Record<string, BoardEntry>; entry: BoardEntry } | Response {
+): { board: Record<string, BoardEntry>; key: string; entry: BoardEntry } | Response {
   const key = normalizeBoardKey(keyFromPath);
   if (key instanceof Response) return key;
   const entryResult = makeBoardEntry(value, updatedBy);
@@ -33,7 +33,7 @@ export function setBoardKey(
   const board = { ...invite.board, [key]: entryResult };
   const validation = validateBoard(invite.boardSchema, board);
   if (validation) return validation;
-  return { board, entry: entryResult };
+  return { board, key, entry: entryResult };
 }
 
 export function patchBoard(

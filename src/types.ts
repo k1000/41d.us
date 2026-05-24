@@ -2,7 +2,7 @@ export interface Env {
   RENDEZVOUS: DurableObjectNamespace;
 }
 
-export type SessionPhase = "waiting" | "ready" | "closed";
+type SessionPhase = "waiting" | "ready" | "closed";
 
 export type Recipient = "all" | string | string[];
 
@@ -18,7 +18,7 @@ export interface RoomMessage {
   created_at: string;
 }
 
-export type ParticipantState = "free" | "busy";
+type ParticipantState = "free" | "busy";
 
 export interface Participant {
   id: string;

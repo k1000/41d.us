@@ -379,11 +379,13 @@ describe("board", () => {
   });
 
   it("sets and reads a board key", async () => {
-    await fix.session.fetch(new Request(`https://room${fix.roomPath}/board/tasks`, {
+    const setRes = await fix.session.fetch(new Request(`https://room${fix.roomPath}/board/tasks`, {
       method: "PUT",
       headers: { ...authHeaders(fix.joinSecret, "agent-a"), "content-type": "application/json" },
       body: JSON.stringify({ "task-1": { title: "test", state: "todo" } }),
     }));
+    const setBody = await setRes.json() as { key: string };
+    expect(setBody.key).toBe("tasks");
     const body = await getRoomJson<{ key: string; entry: { value: Record<string, unknown>; updated_by: string } }>(fix, "/board/tasks");
     expect(body.entry.value).toEqual({ "task-1": { title: "test", state: "todo" } });
     expect(body.entry.updated_by).toBe("agent-a");
