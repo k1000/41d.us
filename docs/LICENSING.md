@@ -30,7 +30,7 @@ Examples of enterprise features include:
 - managed integrations;
 - dedicated or self-hosted enterprise packaging.
 
-See [`ENTERPRISE-BOUNDARY.md`](ENTERPRISE-BOUNDARY.md) for the feature boundary.
+Commercial feature-boundary planning lives outside this open-core repository.
 
 ## Package Publication
 

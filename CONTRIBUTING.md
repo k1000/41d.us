@@ -31,10 +31,7 @@ Commercial/enterprise areas are intentionally out of scope for the open core unl
 - managed integrations;
 - dedicated/self-hosted enterprise packaging.
 
-See:
-
-- [`docs/OPEN-SOURCE-STRATEGY.md`](docs/OPEN-SOURCE-STRATEGY.md)
-- [`docs/ENTERPRISE-BOUNDARY.md`](docs/ENTERPRISE-BOUNDARY.md)
+Commercial planning and enterprise feature boundaries live outside this open-core repository.
 
 ## Development setup
 
@@ -79,7 +76,6 @@ Before proposing such changes, read:
 
 - [`src/security.ts`](src/security.ts)
 - [`docs/PRD.md`](docs/PRD.md)
-- [`docs/PRD-OIDC-AUTH.md`](docs/PRD-OIDC-AUTH.md) if the change involves identity or OIDC.
 
 ## License
 

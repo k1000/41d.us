@@ -5,7 +5,8 @@
 Room sync remains authoritative:
 
 - Send: `POST /r/:id`
-- Sync: `GET /r/:id?after=N`
+- Recent unread sync: `GET /r/:id`
+- Retained history: `GET /r/:id?view=all`
 - Optional wake-up: `GET /r/:id/events`
 
 The shared board stores centralized project state and can optionally be validated by a host-provided JSON Schema:

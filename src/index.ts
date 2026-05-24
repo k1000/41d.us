@@ -4,7 +4,6 @@ import { DEFAULT_MAX_PARTICIPANTS, INVITE_TTL_MS, MAX_PARTICIPANTS_HARD_LIMIT } 
 import { hashJoinSecret, randomBase64Url } from "./crypto";
 import { respondNegotiated } from "./format";
 import { homeMarkdown, homePage } from "./html";
-import { oidcAuthPrdMarkdown, oidcAuthPrdPage } from "./oidc-auth-prd";
 import { RendezvousSession } from "./rendezvous";
 import { securityMarkdown, securityPage } from "./security";
 import { skillExampleMarkdown, skillExamplePage, skillMarkdown, skillPage } from "./skill";
@@ -18,15 +17,6 @@ app.get("/", (c) =>
 );
 
 app.get("/security", (c) => respondNegotiated(c.req.raw, securityPage, () => securityMarkdown));
-
-app.get("/prd/oidc-auth", (c) => respondNegotiated(c.req.raw, oidcAuthPrdPage, () => oidcAuthPrdMarkdown));
-
-app.get("/prd/OIDC-AUTH.md", (c) =>
-  c.body(oidcAuthPrdMarkdown, 200, {
-    "content-type": "text/markdown; charset=utf-8",
-    "content-disposition": 'inline; filename="OIDC-AUTH.md"',
-  }),
-);
 
 app.get("/security/SECURITY.md", (c) =>
   c.body(securityMarkdown, 200, {
@@ -98,6 +88,7 @@ app.all("/r/:inviteId/*", (c) => {
 app.notFound((c) => c.text("not found", 404));
 
 interface CreateInviteBody {
+  room_id?: string;
   host_id?: string;
   room_name?: string;
   max_participants?: number;
@@ -108,6 +99,7 @@ interface CreateInviteBody {
 }
 
 interface NormalizedInviteRequest {
+  roomId: string;
   hostId: string;
   roomName: string;
   maxParticipants: number;
@@ -119,7 +111,7 @@ interface NormalizedInviteRequest {
 async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Response> {
   const body = await c.req.json().catch(() => ({})) as CreateInviteBody;
   const normalized = normalizeCreateInviteBody(body);
-  const inviteId = randomBase64Url(16);
+  const inviteId = normalized.roomId;
   const joinSecret = randomBase64Url(32);
   const expiresAt = Date.now() + INVITE_TTL_MS;
   const state: InitPayload = {
@@ -159,6 +151,7 @@ async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Respon
 function normalizeCreateInviteBody(body: CreateInviteBody): NormalizedInviteRequest {
   const roomName = normalizeRoomName(body.room_name);
   return {
+    roomId: normalizeRoomId(body.room_id),
     hostId: normalizeHostId(body.host_id),
     roomName,
     maxParticipants: normalizeMaxParticipants(body.max_participants),
@@ -166,6 +159,11 @@ function normalizeCreateInviteBody(body: CreateInviteBody): NormalizedInviteRequ
     ...(body.board_schema && typeof body.board_schema === "object" ? { boardSchema: body.board_schema } : {}),
     ...(body.board && typeof body.board === "object" ? { initialBoard: body.board } : {}),
   };
+}
+
+function normalizeRoomId(value: string | undefined): string {
+  const proposed = typeof value === "string" ? sanitizeId(value.trim()) : "";
+  return proposed || randomBase64Url(16);
 }
 
 function normalizeHostId(value: string | undefined): string {
@@ -195,6 +193,7 @@ function buildInviteResponse(args: NormalizedInviteRequest & { requestUrl: URL; 
   return {
     intro: `You are invited by ${args.hostId} to the "${args.roomName}" multi-agent 41d.us room. Open room_url, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
     next_step: "Open room_url and follow the Join now command.",
+    room_id: args.inviteId,
     invite_id: args.inviteId,
     room: {
       name: args.roomName,

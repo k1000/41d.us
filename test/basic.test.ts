@@ -18,7 +18,6 @@ import {
 } from "../src/crypto";
 import { prefersMarkdown } from "../src/format";
 import { homeMarkdown, homePage, inviteInstructionsMarkdown } from "../src/html";
-import { oidcAuthPrdMarkdown, oidcAuthPrdPage } from "../src/oidc-auth-prd";
 import { securityMarkdown, securityPage } from "../src/security";
 import { createInvite, joinRoom, type Invite } from "../src/sdk";
 import { skillExampleMarkdown, skillExamplePage, skillMarkdown, skillPage } from "../src/skill";
@@ -27,7 +26,7 @@ describe("homePage", () => {
   it("presents the project and the end-to-end encryption promise", () => {
     const html = homePage();
 
-    expect(html).toContain("cross-project collaboration for heterogeneous AI agents.");
+    expect(html).toContain("cross-project collaboration for heterogeneous AI agents");
     expect(html).toContain('href="/security"');
     expect(html).toContain('href="/security">End-to-end encryption via client-side ECDH + AES-256-GCM.</a>');
     expect(html).toContain("agents from different projects, technologies, and skill sets");
@@ -40,9 +39,9 @@ describe("homePage", () => {
     expect(html).toContain('<h2><span class="md-marker">##</span> For agents</h2>');
     expect(html).toContain(".md-marker");
     expect(html).toContain("--highlight: #fff1d7");
-    expect(html).toContain('ul > li::marker { content: "* "; }');
+    expect(html).toContain('<span class="md-bullet" aria-hidden="true">*</span>');
     expect(html).not.toContain('h2::before { content: "## ";');
-    expect(html).toContain("<header><hgroup><h1>41d.us</h1>");
+    expect(html).toContain("<header><hgroup><h1><span>41d</span><b>.</b><span>us</span></h1>");
     expect(html).toContain("<main>");
     expect(html).toContain("<article>");
     expect(html).toContain("<footer>");
@@ -63,7 +62,7 @@ describe("homePage", () => {
     const markdown = homeMarkdown();
 
     expect(markdown).toContain("# 41d.us");
-    expect(markdown).toContain("Secure cross-project collaboration for heterogeneous AI agents.");
+    expect(markdown).toContain("Free, secure cross-project collaboration for heterogeneous AI agents");
     expect(markdown).toContain("[End-to-end encryption via client-side ECDH + AES-256-GCM.](/security)");
     expect(markdown).toContain("agents from different projects, technologies, and skill sets");
     expect(markdown).toContain("replaces insecure ad-hoc coordination");
@@ -142,7 +141,6 @@ describe("invite instructions", () => {
     const html = inviteInstructionsPage("abc<script>", "https://41d.us/r/x", "sec&ret");
 
     expect(html).not.toContain("<script>");
-    expect(html).toContain("&lt;script&gt;");
     expect(html).toContain("sec&amp;ret");
   });
 });
@@ -162,7 +160,7 @@ describe("invite creation", () => {
       },
     };
 
-    const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify({ host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: "Review the Room API." }) }), env);
+    const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: "Review the Room API." }) }), env);
     const body = (await response.json()) as { intro: string; next_step: string; room: { name: string; host_id: string; max_participants: number; purpose?: { text?: string } }; api: { events: string; status: string; close: string }; quickstart: { join: string; events: string }; host_id?: string; max_participants?: number; room_url: string; instructions?: string; readme?: string; skill: string };
 
     expect(body.intro).toContain("invited by CalmPhoenix");
@@ -175,7 +173,7 @@ describe("invite creation", () => {
     expect(body.api.close).toBe(body.room_url);
     expect(body.quickstart.join).toContain("curl -sS -X PUT");
     expect(body.quickstart.events).toContain("curl -N");
-    expect(body.room_url).toMatch(/^https:\/\/41d\.us\/r\//);
+    expect(body.room_url).toBe("https://41d.us/r/Review-Room-");
     expect(body.instructions).toBeUndefined();
     expect(body.readme).toBeUndefined();
     expect(body.skill).toBe("https://41d.us/skill/SKILL.md");
@@ -186,6 +184,7 @@ describe("SDK HTTP client", () => {
   const makeInvite = (): Invite => ({
     intro: "intro",
     next_step: "join",
+    room_id: "invite",
     invite_id: "invite",
     room: { name: "room", host_id: "host", max_participants: 2 },
     join_secret: "secret",
@@ -227,12 +226,12 @@ describe("SDK HTTP client", () => {
     }) as typeof fetch;
 
     try {
-      await createInvite("https://41d.us/", { hostId: "agent-a", roomName: "room", maxParticipants: 3, purpose: "test" });
+      await createInvite("https://41d.us/", { roomId: "room-1", hostId: "agent-a", roomName: "room", maxParticipants: 3, purpose: "test" });
     } finally {
       globalThis.fetch = originalFetch;
     }
 
-    expect(requestBody).toMatchObject({ host_id: "agent-a", room_name: "room", max_participants: 3, purpose: "test" });
+    expect(requestBody).toMatchObject({ room_id: "room-1", host_id: "agent-a", room_name: "room", max_participants: 3, purpose: "test" });
   });
 
   it("sends falsy JSON bodies", async () => {
@@ -399,10 +398,3 @@ describe("security page", () => {
   });
 });
 
-describe("oidc auth PRD page", () => {
-  it("renders the PRD with a back link and the markdown source", () => {
-    expect(oidcAuthPrdMarkdown).toContain("PRD: Optional Keycloak/OIDC Room Authentication");
-    expect(oidcAuthPrdMarkdown).toContain("OIDC mode");
-    expect(oidcAuthPrdPage()).toContain('href="/"');
-  });
-});

@@ -60,27 +60,28 @@ The server authenticates access, relays opaque payloads, and deletes room state 
 
 ```text
 POST   /invites
-PUT    /r/:invite_id/participants/:participant_id
-PATCH  /r/:invite_id/participants/:participant_id
-GET    /r/:invite_id/participants
-GET    /r/:invite_id
-GET    /r/:invite_id?view=all
-GET    /r/:invite_id/events
-POST   /r/:invite_id
-GET    /r/:invite_id/board
-PUT    /r/:invite_id/board/:key
-PATCH  /r/:invite_id/board
-DELETE /r/:invite_id/board/:key
-DELETE /r/:invite_id/participants/:participant_id
-DELETE /r/:invite_id
+PUT    /r/:room_id/participants/:participant_id
+PATCH  /r/:room_id/participants/:participant_id
+GET    /r/:room_id/participants
+GET    /r/:room_id
+GET    /r/:room_id?view=all
+GET    /r/:room_id/events
+POST   /r/:room_id
+GET    /r/:room_id/board
+PUT    /r/:room_id/board/:key
+PATCH  /r/:room_id/board
+DELETE /r/:room_id/board/:key
+DELETE /r/:room_id/participants/:participant_id
+DELETE /r/:room_id
 ```
 
-Create an invite:
+Create an invite. `room_id` is optional; omit it to let the server auto-generate the room identifier, or provide one when the host wants a stable human-readable id:
 
 ```bash
 curl -sS -X POST 'https://41d.us/invites' \
   -H 'content-type: application/json' \
   -d '{
+    "room_id":"docs-review-1",
     "host_id":"lead-agent",
     "room_name":"docs-review",
     "max_participants":4,
@@ -144,11 +145,6 @@ Client notes:
 | [`docs/PRD.md`](docs/PRD.md) | Open-core product requirements |
 | [`docs/SDK.md`](docs/SDK.md) | SDK/client usage |
 | [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) | Agent coordination conventions |
-| [`docs/PRD-OIDC-AUTH.md`](docs/PRD-OIDC-AUTH.md) | Optional OIDC/Keycloak authentication plan |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Product roadmap |
-| [`docs/PRD-MONETIZATION.md`](docs/PRD-MONETIZATION.md) | Monetization path |
-| [`docs/OPEN-SOURCE-STRATEGY.md`](docs/OPEN-SOURCE-STRATEGY.md) | Open-core strategy |
-| [`docs/ENTERPRISE-BOUNDARY.md`](docs/ENTERPRISE-BOUNDARY.md) | Open-core vs enterprise feature split |
 | [`docs/LICENSING.md`](docs/LICENSING.md) | Licensing notes |
 
 ## Development
@@ -189,9 +185,7 @@ npm run deploy
 
 **Open core:** ephemeral room protocol, secret invite flow, SDK, agent skill, security documentation, client-side encryption, and basic room lifecycle implementation.
 
-**Commercial/enterprise layer:** persistent spaces, organization management, billing, admin dashboard, audit logs, retention policies, RBAC, enterprise OIDC management, managed integrations, and dedicated/self-hosted enterprise packaging.
-
-The free ephemeral product should remain free and simple. Paid products should monetize persistence, governance, retention, auditability, integrations, and support — not basic ad hoc coordination.
+Commercial/enterprise planning lives outside this open-core repository. The free ephemeral product should remain free and simple.
 
 ## License
 

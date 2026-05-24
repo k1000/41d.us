@@ -5,6 +5,7 @@ import type { Recipient, RoomMessage } from "./types";
 export interface Invite {
   intro: string;
   next_step: string;
+  room_id: string;
   invite_id: string;
   room: { name: string; host_id: string; max_participants: number };
   join_secret: string;
@@ -29,6 +30,8 @@ export interface Invite {
 }
 
 export interface CreateInviteOptions {
+  /** Optional host-proposed room id. If omitted, the server auto-generates one. */
+  roomId?: string;
   hostId?: string;
   roomName?: string;
   maxParticipants?: number;
@@ -81,6 +84,7 @@ export async function createInvite(baseUrl = "https://41d.us", options: CreateIn
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
+      room_id: options.roomId,
       host_id: options.hostId,
       room_name: options.roomName,
       max_participants: options.maxParticipants,

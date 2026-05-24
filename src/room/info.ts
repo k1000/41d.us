@@ -17,7 +17,7 @@ export function joinResponse(invite: InviteState, participantId: string, cursor:
     participant_id: participantId,
     is_host: participantId === invite.hostId,
     cursor,
-    message: "Joined. Sync with GET room_url?after=N and send with POST room_url.",
+    message: "Joined. Read recent messages with GET room_url, read retained history with GET room_url?view=all, and send with POST room_url.",
   };
 }
 

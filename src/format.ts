@@ -26,7 +26,8 @@ const SHARED_STYLES = `
   body > h1::before { content: "# "; color: var(--highlight); }
   h3::before { content: "### "; color: var(--highlight); }
   body > header hgroup { display: grid; grid-template-columns: minmax(0, max-content) minmax(16rem, 1fr); align-items: end; gap: 2rem; margin: 0 0 1rem; }
-  body > header h1 { font-size: clamp(3rem, 10vw, 6rem); margin: 0; }
+  body > header h1 { color: var(--highlight); font-size: clamp(3rem, 10vw, 6rem); margin: 0; }
+  body > header h1 b { color: CanvasText; font: inherit; }
   body > header p { justify-self: end; text-align: right; margin: 0; max-width: 28rem; font-size: 1.35rem; font-weight: 700; }
   @media (max-width: 720px) {
     body > header hgroup { grid-template-columns: 1fr; gap: 1rem; }
@@ -35,7 +36,9 @@ const SHARED_STYLES = `
   h2 { color: CanvasText; margin-top: 2.5rem; }
   .md-marker { color: var(--highlight); font-weight: 500; }
   li::marker { color: var(--highlight); }
-  ul > li::marker { content: "* "; }
+  ul { list-style: none; padding-left: 1.35rem; }
+  ul > li { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr); column-gap: 0.25rem; align-items: start; }
+  .md-bullet { color: var(--highlight); }
   code, pre { font-family: inherit; }
   code { padding: 0.12rem 0.3rem; background: transparent; color: var(--highlight); }
   pre { padding: 1rem; overflow: auto; background: #000; color: var(--highlight); }
@@ -44,7 +47,7 @@ const SHARED_STYLES = `
   .fineprint, body > footer { opacity: 0.72; font-size: 0.95rem; }
   body > footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px dashed color-mix(in srgb, currentColor 22%, transparent); }
   .warning { border: 2px dashed color-mix(in srgb, currentColor 38%, transparent); padding: 1rem; background: color-mix(in srgb, CanvasText 8%, Canvas 92%); }
-  .card, main > article { border: 2px dashed color-mix(in srgb, currentColor 38%, transparent); padding: 1.25rem; background: color-mix(in srgb, CanvasText 8%, Canvas 92%); }
+  .card, main > article { margin-top: 2rem; border: 2px dashed color-mix(in srgb, currentColor 38%, transparent); padding: 1.25rem; background: color-mix(in srgb, CanvasText 8%, Canvas 92%); }
   .button { display: inline-block; margin: 1rem 0; padding: 0.8rem 1rem; border-radius: 999px; background: currentColor; color: Canvas; text-decoration: none; font-weight: 700; }
   a { color: var(--highlight); }
   blockquote { border-left: 3px solid currentColor; margin-left: 0; padding-left: 1rem; opacity: 0.85; }
@@ -149,8 +152,21 @@ export function addLiteralMarkdownH2Markers(html: string): string {
   return html.replace(/<h2(\s[^>]*)?>(?!##\s)/g, (_, attrs) => `<h2${attrs ?? ""}><span class="md-marker">##</span> `);
 }
 
+export function addLiteralMarkdownListMarkers(html: string): string {
+  return html.replace(/<ul>([\s\S]*?)<\/ul>/g, (block) =>
+    block
+      .replace("<ul>", '<ul class="md-list">')
+      .replace(/<li>(?!<span class="md-bullet")/g, '<li><span class="md-bullet" aria-hidden="true">*</span><span>')
+      .replace(/<\/li>/g, "</span></li>"),
+  );
+}
+
+export function addLiteralMarkdownMarkers(html: string): string {
+  return addLiteralMarkdownListMarkers(addLiteralMarkdownH2Markers(html));
+}
+
 export function renderMarkdownPage(title: string, markdown: string, extraHtml?: string): string {
-  const rendered = addLiteralMarkdownH2Markers(marked.parse(markdown) as string);
+  const rendered = addLiteralMarkdownMarkers(marked.parse(markdown) as string);
   return renderPage(title, (extraHtml ? `${extraHtml}\n` : "") + rendered);
 }
 
