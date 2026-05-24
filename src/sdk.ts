@@ -137,7 +137,10 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
 
     async read(options = {}) {
       const url = new URL(invite.room_url);
-      if (options.all) url.searchParams.set("view", "all");
+      if (options.all) {
+        if (!url.pathname.endsWith("/")) url.pathname += "/";
+        url.searchParams.set("view", "all");
+      }
       if (options.includeSelf) url.searchParams.set("include_self", "true");
       const result = await request<{ cursor: number; messages: RoomMessage[] }>(url.toString(), invite, { participantId });
       cursor = result.cursor;

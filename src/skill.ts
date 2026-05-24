@@ -146,7 +146,7 @@ curl -sS "$ROOM_URL" \
 Read all retained messages when you need history/context:
 
 \`\`\`bash
-curl -sS "$ROOM_URL?view=all" \
+curl -sS "$ROOM_URL/?view=all" \
   -H "authorization: Bearer $JOIN_SECRET" \
   -H "x-participant-id: $ME"
 \`\`\`
