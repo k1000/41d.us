@@ -1,0 +1,111 @@
+import {
+  decryptWithKey,
+  deriveSharedKey,
+  encryptWithKey,
+  exportPublicKey,
+  generateECDHKeyPair,
+  generateMessageKey,
+  importPublicKey,
+  isEncryptedBody,
+  unwrapKey,
+  wrapKeyForRecipient,
+} from "./crypto";
+import type { EncryptedBody } from "./crypto";
+import type { Recipient, RoomMessage } from "./types";
+
+interface SdkCryptoSession {
+  announceKeyBody(): Promise<{ public_key: string }>;
+  processKeyExchange(messages: RoomMessage[]): Promise<void>;
+  encryptForSend(plainBody: unknown, to: Recipient): Promise<EncryptedBody>;
+  decryptMessageBody(msg: RoomMessage): Promise<unknown>;
+}
+
+export async function createSdkCryptoSession(participantId: string): Promise<SdkCryptoSession> {
+  const keyPair = await generateECDHKeyPair();
+  const selfKey = await deriveSharedKey(keyPair.privateKey, keyPair.publicKey);
+  const peerKeys = new Map<string, CryptoKey>();
+  const sharedKeys = new Map<string, CryptoKey>();
+
+  async function ensureSharedKey(peerId: string): Promise<CryptoKey | undefined> {
+    if (sharedKeys.has(peerId)) return sharedKeys.get(peerId)!;
+    const peerPub = peerKeys.get(peerId);
+    if (!peerPub) return undefined;
+    const derived = await deriveSharedKey(keyPair.privateKey, peerPub);
+    sharedKeys.set(peerId, derived);
+    return derived;
+  }
+
+  function recipientIdsFor(to: Recipient): string[] {
+    return to === "all" ? [...peerKeys.keys()] : (Array.isArray(to) ? to : [to]);
+  }
+
+  async function requireSharedKey(peerId: string): Promise<CryptoKey> {
+    const sharedKey = await ensureSharedKey(peerId);
+    if (!sharedKey) throw new Error(`No public key from ${peerId}. Wait for them to announceKey() and sync by reading.`);
+    return sharedKey;
+  }
+
+  async function encryptDirectBody(plaintext: string, recipientId: string): Promise<EncryptedBody> {
+    const { ciphertext, iv } = await encryptWithKey(await requireSharedKey(recipientId), plaintext);
+    return { encrypted: true, ciphertext, iv };
+  }
+
+  async function wrapMessageKey(messageKey: CryptoKey, recipientId: string): Promise<{ encrypted_key: string; iv: string }> {
+    return wrapKeyForRecipient(messageKey, recipientId === participantId ? selfKey : await requireSharedKey(recipientId));
+  }
+
+  async function encryptWrappedBody(plaintext: string, recipientIds: string[]): Promise<EncryptedBody> {
+    const messageKey = await generateMessageKey();
+    const { ciphertext, iv } = await encryptWithKey(messageKey, plaintext);
+    const keys: Record<string, { encrypted_key: string; iv: string }> = {};
+    for (const recipientId of recipientIds) keys[recipientId] = await wrapMessageKey(messageKey, recipientId);
+    if (!keys[participantId]) keys[participantId] = await wrapMessageKey(messageKey, participantId);
+    return { encrypted: true, ciphertext, iv, keys };
+  }
+
+  return {
+    async announceKeyBody() {
+      peerKeys.set(participantId, keyPair.publicKey);
+      return { public_key: await exportPublicKey(keyPair.publicKey) };
+    },
+
+    async processKeyExchange(messages) {
+      for (const msg of messages) {
+        if (msg.intent !== "key.exchange" || msg.from === participantId) continue;
+        if (peerKeys.has(msg.from)) continue;
+        const body = msg.body as { public_key?: string };
+        if (!body.public_key) continue;
+        peerKeys.set(msg.from, await importPublicKey(body.public_key));
+      }
+    },
+
+    async encryptForSend(plainBody, to) {
+      const recipientIds = recipientIdsFor(to);
+      const plaintext = JSON.stringify(plainBody);
+      if (recipientIds.length === 1 && recipientIds[0] !== participantId) return encryptDirectBody(plaintext, recipientIds[0]);
+      return encryptWrappedBody(plaintext, recipientIds);
+    },
+
+    async decryptMessageBody(msg) {
+      const body = msg.body;
+      if (!isEncryptedBody(body)) return body;
+
+      const { ciphertext, iv, keys } = body;
+
+      if (keys && keys[participantId]) {
+        const unwrapSharedKey = msg.from === participantId ? selfKey : await ensureSharedKey(msg.from);
+        if (!unwrapSharedKey) return body;
+        const messageKey = await unwrapKey(keys[participantId].encrypted_key, keys[participantId].iv, unwrapSharedKey);
+        return JSON.parse(await decryptWithKey(messageKey, ciphertext, iv));
+      }
+
+      if (!keys) {
+        const sharedKey = msg.from === participantId ? selfKey : await ensureSharedKey(msg.from);
+        if (!sharedKey) return body;
+        return JSON.parse(await decryptWithKey(sharedKey, ciphertext, iv));
+      }
+
+      return body;
+    },
+  };
+}

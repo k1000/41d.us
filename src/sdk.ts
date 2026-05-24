@@ -1,16 +1,5 @@
-import {
-  decryptWithKey,
-  deriveSharedKey,
-  encryptWithKey,
-  exportPublicKey,
-  generateECDHKeyPair,
-  generateMessageKey,
-  importPublicKey,
-  isEncryptedBody,
-  unwrapKey,
-  wrapKeyForRecipient,
-} from "./crypto";
-import type { EncryptedBody } from "./crypto";
+import { createSdkCryptoSession } from "./sdk-crypto-session";
+import { request } from "./sdk-request";
 import type { Recipient, RoomMessage } from "./types";
 
 export interface Invite {
@@ -108,98 +97,7 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
   const join = await request<{ ok: true; cursor: number }>(`${invite.room_url}/participants/${encodeURIComponent(participantId)}`, invite, { method: "PUT", body: Object.keys(options).length ? options : undefined });
   let cursor = join.cursor;
 
-  // Generate ECDH keypair for this session
-  const keyPair = await generateECDHKeyPair();
-  const selfKey = await deriveSharedKey(keyPair.privateKey, keyPair.publicKey);
-
-  // Peer public keys: participantId → CryptoKey
-  const peerKeys = new Map<string, CryptoKey>();
-
-  // Derived shared keys: participantId → CryptoKey (AES-256-GCM)
-  const sharedKeys = new Map<string, CryptoKey>();
-
-  /** Lazily derive a shared key for a peer when we first encounter their public key. */
-  async function ensureSharedKey(peerId: string): Promise<CryptoKey | undefined> {
-    if (sharedKeys.has(peerId)) return sharedKeys.get(peerId)!;
-    const peerPub = peerKeys.get(peerId);
-    if (!peerPub) return undefined;
-    const derived = await deriveSharedKey(keyPair.privateKey, peerPub);
-    sharedKeys.set(peerId, derived);
-    return derived;
-  }
-
-  /** Process key exchange messages to collect peer public keys. */
-  async function processKeyExchange(messages: RoomMessage[]): Promise<void> {
-    for (const msg of messages) {
-      if (msg.intent !== "key.exchange" || msg.from === participantId) continue;
-      if (peerKeys.has(msg.from)) continue;
-      const body = msg.body as { public_key?: string };
-      if (!body.public_key) continue;
-      peerKeys.set(msg.from, await importPublicKey(body.public_key));
-    }
-  }
-
-  function recipientIdsFor(to: Recipient): string[] {
-    return to === "all" ? [...peerKeys.keys()] : (Array.isArray(to) ? to : [to]);
-  }
-
-  async function requireSharedKey(peerId: string): Promise<CryptoKey> {
-    const sharedKey = await ensureSharedKey(peerId);
-    if (!sharedKey) throw new Error(`No public key from ${peerId}. Wait for them to announceKey() and sync by reading.`);
-    return sharedKey;
-  }
-
-  async function encryptDirectBody(plaintext: string, recipientId: string): Promise<EncryptedBody> {
-    const { ciphertext, iv } = await encryptWithKey(await requireSharedKey(recipientId), plaintext);
-    return { encrypted: true, ciphertext, iv };
-  }
-
-  async function wrapMessageKey(messageKey: CryptoKey, recipientId: string): Promise<{ encrypted_key: string; iv: string }> {
-    return wrapKeyForRecipient(messageKey, recipientId === participantId ? selfKey : await requireSharedKey(recipientId));
-  }
-
-  async function encryptWrappedBody(plaintext: string, recipientIds: string[]): Promise<EncryptedBody> {
-    const messageKey = await generateMessageKey();
-    const { ciphertext, iv } = await encryptWithKey(messageKey, plaintext);
-    const keys: Record<string, { encrypted_key: string; iv: string }> = {};
-    for (const recipientId of recipientIds) keys[recipientId] = await wrapMessageKey(messageKey, recipientId);
-    if (!keys[participantId]) keys[participantId] = await wrapMessageKey(messageKey, participantId);
-    return { encrypted: true, ciphertext, iv, keys };
-  }
-
-  /** Encrypt a plain body for the given recipients. */
-  async function encryptForSend(plainBody: unknown, to: Recipient): Promise<EncryptedBody> {
-    const recipientIds = recipientIdsFor(to);
-    const plaintext = JSON.stringify(plainBody);
-    if (recipientIds.length === 1 && recipientIds[0] !== participantId) return encryptDirectBody(plaintext, recipientIds[0]);
-    return encryptWrappedBody(plaintext, recipientIds);
-  }
-
-  /** Decrypt a message body if it's encrypted. Returns the original body if plaintext. */
-  async function decryptMessageBody(msg: RoomMessage): Promise<unknown> {
-    const body = msg.body;
-    if (!isEncryptedBody(body)) return body;
-
-    const { ciphertext, iv, keys } = body;
-
-    // Broadcast: unwrap our message key, then decrypt
-    if (keys && keys[participantId]) {
-      const unwrapSharedKey = msg.from === participantId ? selfKey : await ensureSharedKey(msg.from);
-      if (!unwrapSharedKey) return body; // can't decrypt, pass through
-      const messageKey = await unwrapKey(keys[participantId].encrypted_key, keys[participantId].iv, unwrapSharedKey);
-      return JSON.parse(await decryptWithKey(messageKey, ciphertext, iv));
-    }
-
-    // Direct message: decrypt with shared key from sender
-    if (!keys) {
-      const sharedKey = msg.from === participantId ? selfKey : await ensureSharedKey(msg.from);
-      if (!sharedKey) return body; // can't decrypt, pass through
-      return JSON.parse(await decryptWithKey(sharedKey, ciphertext, iv));
-    }
-
-    // keys present but we're not in them — message wasn't for us
-    return body;
-  }
+  const cryptoSession = await createSdkCryptoSession(participantId);
 
   return {
     invite,
@@ -207,9 +105,7 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
     cursor,
 
     async announceKey() {
-      const publicKey = await exportPublicKey(keyPair.publicKey);
-      // Also register our own key so we can derive self-shared-key for broadcasts
-      peerKeys.set(participantId, keyPair.publicKey);
+      const publicKeyBody = await cryptoSession.announceKeyBody();
       return request(invite.room_url, invite, {
         method: "POST",
         participantId,
@@ -217,14 +113,14 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
           to: "all" as Recipient,
           intent: "key.exchange",
           priority: "normal",
-          body: { public_key: publicKey },
+          body: publicKeyBody,
         },
       });
     },
 
     async send(to, body, options = {}) {
       const isKeyExchange = options.intent === "key.exchange" || options.plain;
-      const sendBody = isKeyExchange ? body : await encryptForSend(body, to);
+      const sendBody = isKeyExchange ? body : await cryptoSession.encryptForSend(body, to);
       return request(invite.room_url, invite, {
         method: "POST",
         participantId,
@@ -246,12 +142,12 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
       cursor = result.cursor;
 
       // Process any key exchange messages to learn peer public keys
-      await processKeyExchange(result.messages);
+      await cryptoSession.processKeyExchange(result.messages);
 
       // Decrypt encrypted messages
       return Promise.all(result.messages.map(async (msg) => ({
         ...msg,
-        body: await decryptMessageBody(msg),
+        body: await cryptoSession.decryptMessageBody(msg),
       }))) as Promise<RoomMessage[]>;
     },
 
@@ -289,18 +185,4 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
       return request(`${invite.room_url}/export`, invite, { participantId });
     },
   };
-}
-
-async function request<T>(url: string, invite: Invite, options: { method?: string; participantId?: string; body?: unknown } = {}): Promise<T> {
-  const headers: Record<string, string> = { authorization: `Bearer ${invite.join_secret}` };
-  if (options.participantId) headers["x-participant-id"] = options.participantId;
-  const hasBody = options.body !== undefined;
-  if (hasBody) headers["content-type"] = "application/json";
-  const response = await fetch(url, {
-    method: options.method ?? "GET",
-    headers,
-    body: hasBody ? JSON.stringify(options.body) : undefined,
-  });
-  if (!response.ok) throw new Error(`${url} failed: ${response.status} ${await response.text()}`);
-  return (await response.json()) as T;
 }
