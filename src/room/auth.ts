@@ -1,4 +1,4 @@
-import { hashJoinSecret } from "../crypto";
+import { hashJoinSecret } from "../../packages/sdk/src/crypto";
 import { json } from "../format";
 import type { InviteState } from "../types";
 import { isParticipantJoined, requireParticipantId } from "./participants";

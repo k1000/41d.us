@@ -1,0 +1,13 @@
+{
+  "name": "@41d/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/sdk.ts",
+    "./crypto": "./src/crypto.ts",
+    "./crypto-session": "./src/sdk-crypto-session.ts",
+    "./types": "./src/types.ts"
+  }
+}

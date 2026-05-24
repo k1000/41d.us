@@ -1,5 +1,5 @@
 import { MAX_BODY_BYTES, MAX_MESSAGES } from "../constants";
-import { isEncryptedBody } from "../crypto";
+import { isEncryptedBody } from "../../packages/sdk/src/crypto";
 import { json } from "../format";
 import type { InitPayload, InviteState, Recipient, RoomMessage } from "../types";
 import { isParticipantJoined } from "./participants";

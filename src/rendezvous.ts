@@ -4,8 +4,7 @@ import { authenticateParticipant, requireHost, withAuth, withJoinedParticipant }
 import { RoomBoardController, validateBoard, wrapInitialBoard } from "./room/board-controller";
 import { RoomEvents } from "./room/events";
 import { roomExport, roomInfo, roomStatus } from "./room/info";
-import { createInitialMessage } from "./room/messages";
-import { buildReadResponse, createSentMessage, isReadableMessage, parseReadOptions } from "./room/messages";
+import { buildReadResponse, createInitialMessage, createSentMessage, isReadableMessage, parseReadOptions } from "./room/messages";
 import { activeParticipants, isParticipantJoined, withReadReceipt } from "./room/participants";
 import { RoomParticipantController } from "./room/participant-controller";
 import { routeRoomRequest } from "./room/router";
@@ -43,8 +42,8 @@ export class RendezvousSession {
     roomUrl.search = "";
     return respondNegotiated(
       request,
-      () => inviteInstructionsPage(invite.roomId, roomUrl.toString()),
-      () => inviteInstructionsMarkdown(invite.roomId, roomUrl.toString()),
+      () => inviteInstructionsPage(roomUrl.toString()),
+      () => inviteInstructionsMarkdown(roomUrl.toString()),
     );
   }
 

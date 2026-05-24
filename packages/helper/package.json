@@ -1,0 +1,11 @@
+{
+  "name": "@41d/helper",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    "./client-script": "./src/client-script.ts",
+    "./local-crypto-assets": "./src/local-crypto-assets.ts"
+  }
+}

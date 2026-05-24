@@ -15,12 +15,13 @@ import {
   randomBase64Url,
   unwrapKey,
   wrapKeyForRecipient,
-} from "../src/crypto";
+} from "../packages/sdk/src/crypto";
 import { prefersMarkdown } from "../src/format";
 import { homeMarkdown, homePage, inviteInstructionsMarkdown } from "../src/html";
 import { securityMarkdown, securityPage } from "../src/security";
-import { createInvite, joinRoom, type Invite } from "../src/sdk";
-import { skillExampleMarkdown, skillExamplePage, skillMarkdown, skillPage } from "../src/skill";
+import { createInvite, joinRoom, type Invite } from "../packages/sdk/src/sdk";
+import { skillExampleMarkdown, skillMarkdown } from "../packages/skill/src/skill";
+import { skillExamplePage, skillPage } from "../src/skill-pages";
 
 describe("homePage", () => {
   it("presents the project and the end-to-end encryption promise", () => {
@@ -69,9 +70,9 @@ describe("homePage", () => {
     expect(markdown).toContain("agents from different projects, technologies, and skill sets");
     expect(markdown).toContain("replaces insecure ad-hoc coordination");
     expect(markdown).toContain("Recommended encrypted helper flow");
-    expect(markdown).toContain("node - doctor invite.json agent-b");
-    expect(markdown).toContain("POST   /r/:room_id                  encrypted body required");
-    expect(markdown).toContain("Raw message posts without an encrypted body are rejected.");
+    expect(markdown).toContain("node - doctor docs-review.json agent-b");
+    expect(markdown).toContain("agents usually do not need to call message endpoints directly");
+    expect(markdown).toContain("Protocol reference: https://41d.us/client/SDK.md");
     expect(markdown).toContain("Download and install Agent skill: https://41d.us/skill/SKILL.md");
     expect(markdown).toContain("Check SDK: https://41d.us/client/SDK.md");
     expect(markdown).not.toContain("## Client code");
@@ -125,7 +126,7 @@ describe("public client assets", () => {
   it("serves SDK docs content", () => {
     expect(sdkMarkdown).toContain("collab space");
     expect(sdkMarkdown).toContain("ORCHESTRATION.md");
-    expect(sdkMarkdown).toContain("node - doctor invite.json agent-b");
+    expect(sdkMarkdown).toContain("node - doctor docs-review.json agent-b");
     expect(sdkMarkdown).toContain("/client/crypto.ts");
     expect(orchestrationMarkdown).toContain("reservation.claim");
     expect(orchestrationMarkdown).toContain("review.result");
@@ -153,7 +154,7 @@ describe("public client assets", () => {
 
 describe("invite instructions", () => {
   it("shows a direct Agent B join command", () => {
-    const markdown = inviteInstructionsMarkdown("abc", "https://41d.us/r/abc", "secret");
+    const markdown = inviteInstructionsMarkdown("https://41d.us/r/abc", "secret");
 
     expect(markdown).toContain("ROOM_URL='https://41d.us/r/abc'");
     expect(markdown).toContain("JOIN_SECRET='secret'");
@@ -165,9 +166,8 @@ describe("invite instructions", () => {
 
   it("escapes HTML special characters in the page version", async () => {
     const { inviteInstructionsPage } = await import("../src/html");
-    const html = inviteInstructionsPage("abc<script>", "https://41d.us/r/x", "sec&ret");
+    const html = inviteInstructionsPage("https://41d.us/r/x", "sec&ret");
 
-    expect(html).not.toContain("<script>");
     expect(html).toContain("sec&amp;ret");
   });
 });
@@ -188,7 +188,7 @@ describe("invite creation", () => {
     };
 
     const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: "Review the Room API." }) }), env);
-    const body = (await response.json()) as { intro: string; next_step: string; room_id: string; invite_id?: string; room: { name: string; host_id: string; max_participants: number; purpose?: { text?: string } }; api: { events: string; status: string; close: string }; quickstart: { join: string; events: string; create_invite_client: string; join_from_invite_file: string; send_from_invite_file: string; read_from_invite_file: string; doctor_from_invite_file: string; send_encrypted: string; send_local_encrypted_payload: string }; host_id?: string; max_participants?: number; room_url: string; instructions?: string; readme?: string; skill: string };
+    const body = (await response.json()) as { intro: string; next_step: string; room_id: string; invite_id?: string; room: { name: string; host_id: string; max_participants: number; purpose?: { text?: string } }; api: { events: string; status: string; close: string }; quickstart: { join: string; events: string; create_room_file: string; join_from_room_file: string; send_from_room_file: string; read_from_room_file: string; doctor_from_room_file: string; send_encrypted: string; send_local_encrypted_payload: string }; host_id?: string; max_participants?: number; room_url: string; instructions?: string; readme?: string; skill: string };
 
     expect(body.intro).toContain("invited by CalmPhoenix");
     expect(body.room).toEqual({ name: "review room", host_id: "CalmPhoenix", max_participants: 7, purpose: { text: "Review the Room API." } });
@@ -202,11 +202,12 @@ describe("invite creation", () => {
     expect(body.api.close).toBe(body.room_url);
     expect(body.quickstart.join).toContain("curl -sS -X PUT");
     expect(body.quickstart.events).toContain("curl -N");
-    expect(body.quickstart.create_invite_client).toContain("node - create 'https://41d.us'");
-    expect(body.quickstart.join_from_invite_file).toContain("node - join invite.json");
-    expect(body.quickstart.send_from_invite_file).toContain("node - send invite.json");
-    expect(body.quickstart.read_from_invite_file).toContain("node - read invite.json");
-    expect(body.quickstart.doctor_from_invite_file).toContain("node - doctor invite.json");
+    expect(body.quickstart.create_room_file).toContain("node - create 'https://41d.us'");
+    expect(body.quickstart.create_room_file).toContain("> review-room.json");
+    expect(body.quickstart.join_from_room_file).toContain("node - join review-room.json");
+    expect(body.quickstart.send_from_room_file).toContain("node - send review-room.json");
+    expect(body.quickstart.read_from_room_file).toContain("node - read review-room.json");
+    expect(body.quickstart.doctor_from_room_file).toContain("node - doctor review-room.json");
     expect(body.quickstart.send_encrypted).toContain("https://41d.us/client/41d.js");
     expect(body.quickstart.send_local_encrypted_payload).toContain("https://41d.us/client/crypto.sh");
     expect(body.room_url).toBe("https://41d.us/r/Review-Room-");

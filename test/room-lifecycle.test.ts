@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_MAX_PARTICIPANTS, MAX_BODY_BYTES, MAX_BOARD_VALUE_BYTES } from "../src/constants";
-import { hashJoinSecret, randomBase64Url } from "../src/crypto";
+import { hashJoinSecret, randomBase64Url } from "../packages/sdk/src/crypto";
 import { RendezvousSession } from "../src/rendezvous";
 import type { RoomMessage } from "../src/types";
 

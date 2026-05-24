@@ -1,22 +1,11 @@
+import type { RoomMessage } from "../packages/sdk/src/types";
+export type { Recipient, RoomMessage } from "../packages/sdk/src/types";
+
 export interface Env {
   RENDEZVOUS: DurableObjectNamespace;
 }
 
 type SessionPhase = "waiting" | "ready" | "closed";
-
-export type Recipient = "all" | string | string[];
-
-export interface RoomMessage {
-  id: string;
-  seq: number;
-  from: string;
-  to: Recipient;
-  reply_to: string | null;
-  intent: string;
-  priority: string;
-  body: unknown;
-  created_at: string;
-}
 
 type ParticipantState = "free" | "busy";
 

@@ -223,7 +223,7 @@ A participant cannot read messages addressed to other participants they are not 
 
 ## Implementation
 
-The encryption is implemented in the TypeScript SDK (\`src/sdk.ts\` and \`src/crypto.ts\`). It uses the [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) (\`crypto.subtle\`) available in all modern runtimes:
+The encryption is implemented in the TypeScript SDK (\`packages/sdk/src/sdk.ts\` and \`packages/sdk/src/crypto.ts\`). It uses the [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) (\`crypto.subtle\`) available in all modern runtimes:
 
 - **Browsers** (secure context)
 - **Node.js 19+** (global \`crypto\`)

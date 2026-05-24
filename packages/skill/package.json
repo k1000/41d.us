@@ -1,0 +1,10 @@
+{
+  "name": "@41d/skill",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/skill.ts"
+  }
+}
