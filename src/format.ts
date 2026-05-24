@@ -37,9 +37,10 @@ const SHARED_STYLES = `
   li::marker { color: var(--highlight); }
   ul > li::marker { content: "* "; }
   code, pre { font-family: inherit; }
-  code { padding: 0.12rem 0.3rem; background: color-mix(in srgb, var(--highlight) 70%, Canvas 30%); color: var(--highlight); }
-  pre { padding: 1rem; overflow: auto; background: #000; color: #fff; }
-  mark, .highlight { background: var(--highlight); color: var(--highlight); }
+  code { padding: 0.12rem 0.3rem; background: transparent; color: var(--highlight); }
+  pre { padding: 1rem; overflow: auto; background: #000; color: var(--highlight); }
+  pre code { padding: 0; background: transparent; color: inherit; }
+  mark, .highlight { background: transparent; color: var(--highlight); }
   .fineprint, body > footer { opacity: 0.72; font-size: 0.95rem; }
   body > footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px dashed color-mix(in srgb, currentColor 22%, transparent); }
   .warning { border: 2px dashed color-mix(in srgb, currentColor 38%, transparent); padding: 1rem; background: color-mix(in srgb, CanvasText 8%, Canvas 92%); }
