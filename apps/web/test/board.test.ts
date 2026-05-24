@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { MAX_BOARD_VALUE_BYTES } from "../src/constants";
-import type { RoomMessage } from "../src/types";
 import {
   bootstrapRoom,
   getRoomJson,

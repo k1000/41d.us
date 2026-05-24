@@ -81,4 +81,99 @@ describe("E2E encryption primitives", () => {
     const unwrapped = await unwrapKey(wrappedForSelf.encrypted_key, wrappedForSelf.iv, selfKey);
     await expect(decryptWithKey(unwrapped, ciphertext, iv)).resolves.toBe("i talk to myself");
   });
+
+  it("EncryptedBody has correct structure for direct messages (matches standalone 41d.js contract)", async () => {
+    const alice = (await import("@41d/sdk/crypto-session")).createSdkCryptoSession;
+    const aliceSession = await alice("alice");
+    const bobSession = await alice("bob");
+
+    // Exchange keys
+    await aliceSession.announceKeyBody();
+    const bobPub = await bobSession.announceKeyBody();
+    await aliceSession.processKeyExchange([{
+      id: "", seq: 0, from: "bob", to: "all", reply_to: null,
+      intent: "key.exchange", priority: "normal", body: bobPub, created_at: "",
+    }]);
+
+    // Direct message (single recipient, no wrapping)
+    const body = await aliceSession.encryptForSend({ task: "review" }, "bob");
+
+    expect(body).toHaveProperty("encrypted", true);
+    expect(body).toHaveProperty("ciphertext");
+    expect(body).toHaveProperty("iv");
+    expect(typeof body.ciphertext).toBe("string");
+    expect(typeof body.iv).toBe("string");
+    // Direct messages omit the keys map
+    expect(body).not.toHaveProperty("keys");
+    // Values must be valid base64url
+    expect(body.ciphertext).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(body.iv).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it("EncryptedBody has correct structure for broadcast messages (matches standalone 41d.js contract)", async () => {
+    const factory = (await import("@41d/sdk/crypto-session")).createSdkCryptoSession;
+    const aliceSession = await factory("alice");
+    const bobSession = await factory("bob");
+
+    await aliceSession.announceKeyBody();
+    const bobPub = await bobSession.announceKeyBody();
+    await aliceSession.processKeyExchange([{
+      id: "", seq: 0, from: "bob", to: "all", reply_to: null,
+      intent: "key.exchange", priority: "normal", body: bobPub, created_at: "",
+    }]);
+
+    // Broadcast (has wrapped keys per recipient, including self)
+    const body = await aliceSession.encryptForSend({ task: "review" }, "all");
+
+    expect(body).toHaveProperty("encrypted", true);
+    expect(body).toHaveProperty("ciphertext");
+    expect(body).toHaveProperty("iv");
+    expect(body).toHaveProperty("keys");
+    const keys = body.keys!;
+    // Must include self-wrapped key for sender
+    expect(keys).toHaveProperty("alice");
+    expect(keys).toHaveProperty("bob");
+    // Each wrapped key must have encrypted_key and iv
+    for (const participantId of ["alice", "bob"]) {
+      expect(keys[participantId]).toHaveProperty("encrypted_key");
+      expect(keys[participantId]).toHaveProperty("iv");
+      expect(keys[participantId].encrypted_key).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(keys[participantId].iv).toMatch(/^[A-Za-z0-9_-]+$/);
+    }
+  });
+
+  it("EncryptedBody decrypts correctly with self-wrapped key (broadcast self-decrypt)", async () => {
+    const factory = (await import("@41d/sdk/crypto-session")).createSdkCryptoSession;
+    const aliceSession = await factory("alice");
+    const bobSession = await factory("bob");
+
+    await aliceSession.announceKeyBody();
+    const bobPub = await bobSession.announceKeyBody();
+    await aliceSession.processKeyExchange([{
+      id: "", seq: 0, from: "bob", to: "all", reply_to: null,
+      intent: "key.exchange", priority: "normal", body: bobPub, created_at: "",
+    }]);
+
+    const body = await aliceSession.encryptForSend({ task: "review" }, "all");
+    const msg = {
+      id: "m1", seq: 1, from: "alice", to: "all" as const,
+      reply_to: null, intent: "notify", priority: "normal",
+      body, created_at: new Date().toISOString(),
+    };
+
+    // Alice should decrypt her own broadcast via self-wrapped key
+    const decrypted = await aliceSession.decryptMessageBody(msg);
+    expect(decrypted).toEqual({ task: "review" });
+  });
+
+  describe("base64url encoding conformance", () => {
+    it("encodes/decodes round-trip without padding", async () => {
+      const { randomBase64Url } = await import("@41d/sdk/crypto");
+      const encoded = randomBase64Url(32);
+      expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(encoded).not.toContain("=");
+      expect(encoded).not.toContain("+");
+      expect(encoded).not.toContain("/");
+    });
+  });
 });
