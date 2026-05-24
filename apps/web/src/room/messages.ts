@@ -2,7 +2,7 @@ import { MAX_BODY_BYTES, MAX_MESSAGES } from "../constants";
 import { isEncryptedBody } from "@41d/sdk/crypto";
 import { json } from "../format";
 import type { InitPayload, InviteState, Recipient, RoomMessage } from "../types";
-import { isParticipantJoined } from "./participants";
+import { activeParticipants, isParticipantJoined } from "./participants";
 
 const ENCODER = new TextEncoder();
 
@@ -37,21 +37,17 @@ export function buildReadResponse(invite: InviteState, participantId: string, me
 
 export function createSentMessage(body: Record<string, unknown>, participantId: string, invite: InviteState): { message: RoomMessage; messages: RoomMessage[]; seq: number } | Response {
   if (ENCODER.encode(JSON.stringify(body.body ?? {})).length > MAX_BODY_BYTES) return json({ error: "message body too large" }, 413);
-  if (!isAllowedPlainProtocolMessage(body) && !isOpaqueEncryptedBody(body.body)) {
-    return json({
-      error: "message body must be encrypted",
-      hint: "Use /client/41d.js for send/read, or send an encrypted SDK body / encrypted_payload token.",
-    }, 400);
-  }
   const to: Recipient = (body.to as Recipient) ?? "all";
   if (!validRecipient(invite, to)) return json({ error: "recipient not joined" }, 404);
+  const encryptionValidation = validateEncryptedProtocol(body, participantId, to, invite);
+  if (encryptionValidation) return encryptionValidation;
   const seq = invite.nextSeq + 1;
   const message = createRoomMessage(body, participantId, to, seq);
   const messages = [...invite.messages, message].slice(-MAX_MESSAGES);
   return { message, messages, seq };
 }
 
-function createRoomMessage(body: Record<string, unknown>, participantId: string, to: Recipient, seq: number): RoomMessage {
+export function createRoomMessage(body: Record<string, unknown>, participantId: string, to: Recipient, seq: number): RoomMessage {
   return {
     id: crypto.randomUUID(),
     seq,
@@ -104,5 +100,60 @@ function isOpaqueEncryptedBody(body: unknown): boolean {
     const record = body as Record<string, unknown>;
     if (typeof record.encrypted_payload === "string") return true;
   }
-  return isEncryptedBody(body);
+  return false;
+}
+
+function validateEncryptedProtocol(body: Record<string, unknown>, participantId: string, to: Recipient, invite: InviteState): Response | undefined {
+  if (isAllowedPlainProtocolMessage(body)) return undefined;
+  if (isOpaqueEncryptedBody(body.body)) return undefined;
+  if (!isEncryptedBody(body.body)) {
+    return json({
+      error: "message body must be encrypted",
+      hint: "Use /client/41d.js for send/read, or send an encrypted SDK body / encrypted_payload token.",
+    }, 400);
+  }
+
+  const announced = announcedKeyParticipants(invite);
+  if (!announced.has(participantId)) {
+    return json({
+      error: "sender has not announced encryption key",
+      hint: "Join with the encrypted client or send intent=key.exchange before sending encrypted messages.",
+    }, 409);
+  }
+
+  const recipients = recipientIdsFor(to, invite);
+  const missingKeys = recipients.filter((id) => !announced.has(id));
+  if (missingKeys.length > 0) {
+    return json({
+      error: "recipient encryption keys are missing",
+      missing_participants: missingKeys,
+      hint: "Every recipient, including the host for broadcast rooms, must join/announce its ECDH key before encrypted messages can be sent to it.",
+    }, 409);
+  }
+
+  if (to === "all" || Array.isArray(to)) {
+    const requiredWrappedKeys = [...new Set([...recipients, participantId])];
+    const wrappedKeys = body.body.keys ?? {};
+    const missingWrappedKeys = requiredWrappedKeys.filter((id) => !wrappedKeys[id]);
+    if (missingWrappedKeys.length > 0) {
+      return json({
+        error: "encrypted message is missing wrapped recipient keys",
+        missing_participants: missingWrappedKeys,
+        hint: "Read/sync first so the client sees each participant's key.exchange message, then send again.",
+      }, 409);
+    }
+  }
+
+  return undefined;
+}
+
+function announcedKeyParticipants(invite: InviteState): Set<string> {
+  return new Set(invite.messages
+    .filter((message) => message.intent === "key.exchange" && typeof (message.body as { public_key?: unknown })?.public_key === "string")
+    .map((message) => message.from));
+}
+
+function recipientIdsFor(to: Recipient, invite: InviteState): string[] {
+  if (to === "all") return [...new Set([...activeParticipants(invite.participants).map((p) => p.id), invite.hostId])];
+  return Array.isArray(to) ? [...new Set(to)] : [to];
 }

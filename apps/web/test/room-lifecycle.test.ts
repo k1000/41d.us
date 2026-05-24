@@ -1,17 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { MAX_BODY_BYTES } from "../src/constants";
+import { DEFAULT_EXTEND_MS, MAX_BODY_BYTES, MAX_INVITE_TTL_MS, MIN_INVITE_TTL_MS } from "../src/constants";
 import { hashJoinSecret } from "@41d/sdk/crypto";
 import type { RoomMessage } from "../src/types";
 import {
+  announceKey,
   bootstrapRoom,
   closeRoom,
   decodedPayload,
   deleteParticipant,
-  encryptedPayload,
   getRoomJson,
   joinParticipant,
   readMessages,
-  roomRequest,
   sendMessage,
   type RoomFixture,
 } from "./room/helpers";
@@ -128,12 +127,15 @@ describe("room lifecycle", () => {
     });
   });
 
-  it("accepts SDK-shape encrypted bodies", async () => {
+  it("accepts SDK-shape encrypted bodies after participants announce keys", async () => {
     await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    await announceKey(fix, "agent-a");
+    await announceKey(fix, "agent-b");
     const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
       method: "POST",
       headers: { ...fix.joinSecret ? { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" } : {} },
-      body: JSON.stringify({ to: "all", body: { encrypted: true, ciphertext: "abc", iv: "def" } }),
+      body: JSON.stringify({ to: "agent-b", body: { encrypted: true, ciphertext: "abc", iv: "def" } }),
     }));
     expect(res.status).toBe(200);
   });
@@ -146,6 +148,26 @@ describe("room lifecycle", () => {
       body: JSON.stringify({ to: "all", intent: "key.exchange", body: { public_key: "raw-key" } }),
     }));
     expect(res.status).toBe(200);
+  });
+
+  it("rejects broadcast encrypted messages missing recipient wrapped keys", async () => {
+    await joinParticipant(fix, "host");
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    await announceKey(fix, "host");
+    await announceKey(fix, "agent-a");
+    await announceKey(fix, "agent-b");
+
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      method: "POST",
+      headers: { ...fix.joinSecret ? { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" } : {} },
+      body: JSON.stringify({ to: "all", body: { encrypted: true, ciphertext: "abc", iv: "def", keys: { "agent-a": { encrypted_key: "key", iv: "iv" } } } }),
+    }));
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "encrypted message is missing wrapped recipient keys",
+      missing_participants: expect.arrayContaining(["host", "agent-b"]),
+    });
   });
 
   it("rejects message body too large", async () => {
@@ -303,7 +325,8 @@ describe("room lifecycle", () => {
     }));
     const allBody = (await allRead.json()) as { mode: string; messages: RoomMessage[] };
     expect(allBody.mode).toBe("all");
-    expect(allBody.messages.map((m) => decodedPayload<{ text?: string }>(m.body).text)).toEqual(["first", "second"]);
+    const userMessages = allBody.messages.filter((m) => m.intent === "notify");
+    expect(userMessages.map((m) => decodedPayload<{ text?: string }>(m.body).text)).toEqual(["first", "second"]);
   });
 
   it("read markers are isolated per participant", async () => {
@@ -321,5 +344,99 @@ describe("room lifecycle", () => {
     }));
     const cBody = (await cRead.json()) as { messages: RoomMessage[] };
     expect(cBody.messages.some((m) => decodedPayload<{ text?: string }>(m.body).text === "shared")).toBe(true);
+  });
+
+  it("emits a participant.joined system message when a participant joins", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}?view=all`, {
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a" },
+    }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { messages: RoomMessage[] };
+    const joined = body.messages.find((m) => m.intent === "participant.joined");
+    expect(joined).toBeDefined();
+    expect(joined!.from).toBe("system");
+    expect(joined!.to).toBe("all");
+    expect(joined!.body).toMatchObject({
+      participant_id: "agent-a",
+      room_id: fix.roomId,
+      host_id: "host",
+    });
+  });
+
+  it("rejects encrypted send if sender has not announced an encryption key", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    await announceKey(fix, "agent-b");
+
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" },
+      body: JSON.stringify({ to: "agent-b", body: { encrypted: true, ciphertext: "c", iv: "i" } }),
+    }));
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: "sender has not announced encryption key" });
+  });
+
+  it("rejects encrypted send if a recipient has not announced an encryption key", async () => {
+    await joinParticipant(fix, "agent-a");
+    await joinParticipant(fix, "agent-b");
+    await announceKey(fix, "agent-a");
+
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" },
+      body: JSON.stringify({ to: "agent-b", body: { encrypted: true, ciphertext: "c", iv: "i" } }),
+    }));
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "recipient encryption keys are missing",
+      missing_participants: ["agent-b"],
+    });
+  });
+
+  it("extends the invite TTL for the host with the default", async () => {
+    const before = Date.now();
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/extend`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "host" },
+    }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; extended_ms: number; expires_at: string };
+    expect(body.ok).toBe(true);
+    expect(body.extended_ms).toBe(DEFAULT_EXTEND_MS);
+    expect(Date.parse(body.expires_at)).toBeGreaterThan(before + 10 * 60_000);
+  });
+
+  it("extends the invite TTL by a custom extend_ms", async () => {
+    const extend = 2 * MIN_INVITE_TTL_MS;
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/extend`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "host", "content-type": "application/json" },
+      body: JSON.stringify({ extend_ms: extend }),
+    }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { extended_ms: number };
+    expect(body.extended_ms).toBe(extend);
+  });
+
+  it("rejects /extend for non-host callers", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/extend`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a" },
+    }));
+    expect(res.status).toBe(403);
+  });
+
+  it("caps /extend so expiresAt never exceeds the maximum TTL from now", async () => {
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/extend`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "host", "content-type": "application/json" },
+      body: JSON.stringify({ extend_ms: 99 * MAX_INVITE_TTL_MS }),
+    }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { expires_at: string };
+    expect(Date.parse(body.expires_at)).toBeLessThanOrEqual(Date.now() + MAX_INVITE_TTL_MS + 1000);
   });
 });

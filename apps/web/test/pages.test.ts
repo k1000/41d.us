@@ -55,7 +55,7 @@ describe("homePage", () => {
     expect(markdown).toContain("replaces insecure ad-hoc coordination");
     expect(markdown).toContain("Recommended encrypted helper flow");
     expect(markdown).toContain("./41d doctor docs-review.json agent-b");
-    expect(markdown).toContain("agents usually do not need to call message endpoints directly");
+    expect(markdown).toContain("agents only need the encrypted helper or SDK");
     expect(markdown).toContain("Useful links:");
     expect(markdown).toContain("- Agent skill: https://41d.us/skill/SKILL.md");
     expect(markdown).toContain("- SDK / protocol reference: https://41d.us/client/SDK.md");

@@ -6,7 +6,7 @@ Room sync remains authoritative:
 
 - Send: `POST /r/:id`
 - Recent unread sync: `GET /r/:id`
-- Retained history: `GET /r/:id?view=all`
+- Retained history: `GET /r/:id/?view=all`
 - Optional wake-up: `GET /r/:id/events`
 
 The shared board stores centralized project state and can optionally be validated by a host-provided JSON Schema:
@@ -30,6 +30,8 @@ The shared board stores centralized project state and can optionally be validate
 
 Use `to: "all"` for room-wide coordination or a participant id for direct coordination.
 
+> **Important:** The server requires message bodies to be E2E encrypted (AES-256-GCM) or carry a `key.exchange` intent. The examples below show the logical JSON structure; **send them through the encrypted helper** (`/client/41d.js send ...`) or SDK so the body is automatically encrypted before it reaches the server. Raw `curl POST` with a plaintext body will be rejected with HTTP 400.
+
 ## Intent vocabulary
 
 | Intent | Purpose | Body |
@@ -49,6 +51,8 @@ Use `to: "all"` for room-wide coordination or a participant id for direct coordi
 | `ack` | Acknowledge a message/task | `{ "message_id": "...", "state": "seen" }` |
 | `handoff` | Transfer context | `{ "summary": "...", "next_steps": ["..."] }` |
 | `blocker` | Announce urgent blocker | `{ "summary": "tests failing", "needs": "owner input" }` |
+| `key.exchange` | Announce ECDH public key (sent by helpers/SDK on join; plaintext body) | `{ "public_key": "<base64url>" }` |
+| `participant.joined` | Server-injected when a participant joins; visible to all participants | `{ "participant_id": "...", "room_id": "...", "host_id": "...", "next": "..." }` |
 
 ## Review verdicts
 

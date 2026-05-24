@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { hashJoinSecret, randomBase64Url } from "../../../packages/sdk/src/crypto";
-import { sanitizeId, DEFAULT_MAX_PARTICIPANTS, MAX_PARTICIPANTS_HARD_LIMIT, INVITE_TTL_MS } from "./constants";
+import { sanitizeId, DEFAULT_MAX_PARTICIPANTS, MAX_PARTICIPANTS_HARD_LIMIT, INVITE_TTL_MS, MIN_INVITE_TTL_MS, MAX_INVITE_TTL_MS } from "./constants";
 import type { Env, InitPayload } from "./types";
 
 export interface CreateInviteBody {
@@ -12,6 +12,7 @@ export interface CreateInviteBody {
   first_message?: string | Record<string, unknown>;
   board_schema?: Record<string, unknown>;
   board?: Record<string, unknown>;
+  invite_ttl_ms?: number;
 }
 
 export interface NormalizedInviteRequest {
@@ -19,6 +20,7 @@ export interface NormalizedInviteRequest {
   hostId: string;
   roomName: string;
   maxParticipants: number;
+  inviteTtlMs: number;
   firstMessage?: Record<string, unknown>;
   boardSchema?: Record<string, unknown>;
   initialBoard?: Record<string, unknown>;
@@ -29,7 +31,7 @@ export async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise
   const normalized = normalizeCreateInviteBody(body);
   const roomId = normalized.roomId;
   const joinSecret = randomBase64Url(32);
-  const expiresAt = Date.now() + INVITE_TTL_MS;
+  const expiresAt = Date.now() + normalized.inviteTtlMs;
   const state: InitPayload = {
     roomId,
     secretHash: await hashJoinSecret(roomId, joinSecret),
@@ -70,10 +72,16 @@ function normalizeCreateInviteBody(body: CreateInviteBody): NormalizedInviteRequ
     hostId: normalizeHostId(body.host_id),
     roomName,
     maxParticipants: normalizeMaxParticipants(body.max_participants),
+    inviteTtlMs: normalizeInviteTtl(body.invite_ttl_ms),
     firstMessage: normalizeFirstMessage(body.first_message ?? body.purpose, roomName),
     ...(body.board_schema && typeof body.board_schema === "object" ? { boardSchema: body.board_schema } : {}),
     ...(body.board && typeof body.board === "object" ? { initialBoard: body.board } : {}),
   };
+}
+
+function normalizeInviteTtl(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return INVITE_TTL_MS;
+  return Math.min(Math.max(Math.trunc(value), MIN_INVITE_TTL_MS), MAX_INVITE_TTL_MS);
 }
 
 function normalizeRoomId(value: string | undefined): string {
@@ -115,8 +123,8 @@ async function initInviteState(c: Context<{ Bindings: Env }>, roomId: string, st
 
 function buildInviteResponse(args: NormalizedInviteRequest & { requestUrl: URL; roomUrl: string; roomId: string; joinSecret: string; expiresAt: number }) {
   return {
-    intro: `You are invited by ${args.hostId} to the "${args.roomName}" multi-agent 41d.us room. Open room_url, use join_secret only in the shown join command, join before expires_at, then read and send messages asynchronously.`,
-    next_step: "Open room_url and follow the Join now command.",
+    intro: `You are invited by ${args.hostId} to the "${args.roomName}" multi-agent 41d.us room. Use the encrypted client first: join announces your ECDH public key, read/sync learns peer keys, and send wraps each message key for every recipient.`,
+    next_step: "Run quickstart.join, then quickstart.read_from_room_file or quickstart.send_encrypted. Plain curl joins are only for diagnostics and cannot receive encrypted messages until a key.exchange is announced.",
     room_id: args.roomId,
     room: {
       name: args.roomName,
@@ -141,7 +149,7 @@ function buildApiLinks(roomUrl: string) {
     join: `${roomUrl}/participants/{participant_id}`,
     send: roomUrl,
     read: roomUrl,
-    read_all: `${origin}/r/{room_id}?view=all`,
+    read_all: `${origin}/r/{room_id}/?view=all`,
     events: `${roomUrl}/events`,
     board: `${roomUrl}/board`,
     participants: `${roomUrl}/participants`,
@@ -160,14 +168,14 @@ function buildQuickstart(roomUrl: string, joinSecret: string, defaultName: strin
   const roomFile = `${sanitizeId(roomName) || "room"}.json`;
   return {
     vars: `ROOM_URL='${roomUrl}'\nJOIN_SECRET='${joinSecret}'\nME='${defaultName}'`,
-    join: `curl -sS -X PUT '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"model":"your-model","skills":["typescript","review"]}'`,
+    join_diagnostic_only: `curl -sS -X PUT '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"model":"your-model","skills":["typescript","review"]}'`,
     create_room_file: `curl -fsSL '${clientScriptUrl}' | node - create '${origin}' '{"host_id":"${defaultName}","room_name":"${roomName}"}' > ${roomFile}`,
-    join_encrypted_client: `curl -fsSL '${clientScriptUrl}' | node - join '${roomUrl}' '${joinSecret}' '${defaultName}'`,
+    join: `curl -fsSL '${clientScriptUrl}' | node - join '${roomUrl}' '${joinSecret}' '${defaultName}'`,
     join_from_room_file: `curl -fsSL '${clientScriptUrl}' | node - join ${roomFile} '${defaultName}'`,
     set_busy: `curl -sS -X PATCH '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"state":"busy","status":"Working on the room task","model":"your-model","skills":["typescript","review"]}'`,
     set_free: `curl -sS -X PATCH '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"state":"free","status":"Available"}'`,
     read_recent: `curl -sS '${roomUrl}' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
-    read_all: `curl -sS '${roomUrl}?view=all' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
+    read_all: `curl -sS '${roomUrl}/?view=all' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
     send_encrypted: `curl -fsSL '${clientScriptUrl}' | node - send '${roomUrl}' '${joinSecret}' '${defaultName}' all '{"text":"hello"}'`,
     send_from_room_file: `curl -fsSL '${clientScriptUrl}' | node - send ${roomFile} '${defaultName}' all '{"text":"hello"}'`,
     read_from_room_file: `curl -fsSL '${clientScriptUrl}' | node - read ${roomFile} '${defaultName}'`,

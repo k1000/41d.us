@@ -68,6 +68,7 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 | `roomName` | string (optional) | Human-readable room name |
 | `maxParticipants` | number (optional) | Max participants, 2–64, default 16 |
 | `purpose` | string (optional) | Room purpose, shown as first message |
+| `inviteTtlMinutes` | number (optional) | Invite TTL in minutes (1–60, default 10) |
 | `board` | string (optional) | Initial board state as JSON string |
 | `boardSchema` | string (optional) | JSON Schema for board validation |
 

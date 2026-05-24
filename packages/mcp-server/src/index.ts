@@ -47,8 +47,8 @@ async function getOrCreateSession(
     if (!msg.includes("409") || !msg.includes("already joined")) throw err;
     // Participant already exists — resume with a fresh local crypto session.
     client = await resumeRoom(invite, participantId);
+    await client.announceKey();
   }
-  await client.announceKey();
   sessions.set(key, client);
   return client;
 }
@@ -76,21 +76,25 @@ server.registerTool(
       hostId: z.string().optional().describe("Optional host identifier (default: 'agent')"),
       roomName: z.string().optional().describe("Human-readable room name"),
       maxParticipants: z.number().int().min(2).max(64).optional().describe("Max participants (default: 16)"),
+      inviteTtlMinutes: z.number().int().min(1).max(60).optional().describe("Invite TTL in minutes (default: 10, min: 1, max: 60)"),
       purpose: z.string().optional().describe("Short text describing the room's purpose, shown as the first message"),
       board: z.string().optional().describe("Optional initial board state as a JSON string (e.g. '{\"tasks\":{},\"kanban\":{}}')"),
       boardSchema: z.string().optional().describe("Optional JSON Schema for board validation, as a JSON string"),
     },
   },
   async (args) => {
+    const hostId = args.hostId ?? "agent";
     const invite = await createInvite("https://41d.us", {
-      hostId: args.hostId ?? "agent",
+      hostId,
       roomName: args.roomName,
       maxParticipants: args.maxParticipants,
+      inviteTtlMs: args.inviteTtlMinutes ? args.inviteTtlMinutes * 60_000 : undefined,
       purpose: args.purpose,
       board: args.board ? JSON.parse(args.board) : undefined,
       boardSchema: args.boardSchema ? JSON.parse(args.boardSchema) : undefined,
     });
-    return jsonContent(invite);
+    const host = await getOrCreateSession(invite, hostId);
+    return jsonContent({ ...invite, host_joined: true, host_key_announced: true, host_cursor: host.cursor });
   },
 );
 

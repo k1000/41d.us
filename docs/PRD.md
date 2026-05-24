@@ -94,9 +94,12 @@ Request body (all fields optional):
   "room_name": "review room",
   "max_participants": 7,
   "purpose": "Review the Room API.",
-  "first_message": { "text": "hello" }
+  "first_message": { "text": "hello" },
+  "invite_ttl_ms": 1800000
 }
 ```
+
+`invite_ttl_ms` is optional. Default 10 minutes. Clamped to `[60000, 3600000]` (1 min – 1 hour).
 
 Response:
 
@@ -112,7 +115,7 @@ Response:
     "join": "https://41d.us/r/.../participants/{participant_id}",
     "send": "https://41d.us/r/...",
     "read": "https://41d.us/r/...",
-    "read_all": "https://41d.us/r/...?view=all",
+    "read_all": "https://41d.us/r/.../?view=all",
     "events": "https://41d.us/r/.../events",
     "participants": "https://41d.us/r/.../participants",
     "status": "https://41d.us/r/.../status",
@@ -224,6 +227,7 @@ SSE emits lightweight `ready`, `ping`, `changed`, and `board` events. `changed` 
 
 - `DELETE /r/:room_id/participants/:target_id` with host `X-Participant-Id` kicks a participant.
 - `DELETE /r/:room_id` with host `X-Participant-Id` closes the room.
+- `POST /r/:room_id/extend` with host `X-Participant-Id` extends the invite TTL. Body: `{ "extend_ms": 600000 }`. `extend_ms` is clamped to `[60000, MAX_INVITE_TTL_MS - now]`; default 300000 (5 min). Response: `{ "ok": true, "extended_ms": N, "expires_at": "..." }`.
 
 #### Participant actions
 

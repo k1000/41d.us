@@ -16,8 +16,14 @@ export function joinResponse(invite: InviteState, participantId: string, cursor:
     room: roomInfo(invite),
     participant_id: participantId,
     is_host: participantId === invite.hostId,
+    host_id: invite.hostId,
     cursor,
-    message: "Joined. Read recent messages with GET room_url, read retained history with GET room_url?view=all, and send with POST room_url.",
+    next: {
+      announce_key: "Send a POST with intent=key.exchange and your ECDH public_key to announce your encryption key.",
+      sync: "Call GET room_url (or room.read()) to learn peer keys and fetch messages. The helper/SDK does this for you.",
+      send: "Use the encrypted helper or SDK to send E2E encrypted messages (AES-256-GCM).",
+    },
+    message: `Joined room "${invite.roomName}" as ${participantId}. Host is ${invite.hostId}. Announce your encryption key, sync to learn peer keys, then send encrypted messages.`,
   };
 }
 

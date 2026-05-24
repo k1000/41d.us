@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import app from "../src/index";
 import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
+import { INVITE_TTL_MS, MAX_INVITE_TTL_MS, MIN_INVITE_TTL_MS } from "../src/constants";
 import { inviteInstructionsMarkdown } from "../src/html";
 
 describe("invite instructions", () => {
@@ -9,10 +10,10 @@ describe("invite instructions", () => {
 
     expect(markdown).toContain("ROOM_URL='https://41d.us/r/abc'");
     expect(markdown).toContain("JOIN_SECRET='secret'");
-    expect(markdown).toContain("curl -sS -X PUT \"$ROOM_URL/participants/$ME\"");
-    expect(markdown).toContain("The host is responsible for passing this invitation");
-    expect(markdown).toContain("41d.us does not enforce or provide any invitation transport");
-    expect(markdown).toContain("Raw curl message posts must carry an encrypted body");
+    expect(markdown).toContain("node - join \"$ROOM_URL\" \"$JOIN_SECRET\" \"$ME\"");
+    expect(markdown).toContain("The host should deliver the room URL and join secret through a channel they control and trust");
+    expect(markdown).toContain("41d.us has no mechanism to verify the identity of invitees");
+    expect(markdown).toContain("The encrypted helper announces your ECDH public key on join");
   });
 
   it("escapes HTML special characters in the page version", async () => {
@@ -54,11 +55,12 @@ describe("invite creation", () => {
     expect(body.invite_id).toBeUndefined();
     expect(body.host_id).toBeUndefined();
     expect(body.max_participants).toBeUndefined();
-    expect(body.next_step).toBe("Open room_url and follow the Join now command.");
+    expect(body.next_step).toContain("quickstart.join");
     expect(body.api.events).toMatch(/\/events$/);
     expect(body.api.status).toMatch(/\/status$/);
     expect(body.api.close).toBe(body.room_url);
-    expect(body.quickstart.join).toContain("curl -sS -X PUT");
+    expect(body.quickstart.join).toContain("node - join");
+    expect(body.quickstart.join_diagnostic_only).toContain("curl -sS -X PUT");
     expect(body.quickstart.events).toContain("curl -N");
     expect(body.quickstart.create_room_file).toContain("node - create 'https://41d.us'");
     expect(body.quickstart.create_room_file).toContain("> review-room.json");
@@ -68,6 +70,65 @@ describe("invite creation", () => {
     expect(body.instructions).toBeUndefined();
     expect(body.readme).toBeUndefined();
     expect(body.skill).toBe("https://41d.us/skill/SKILL.md");
+  });
+});
+
+describe("invite TTL", () => {
+  async function postInvite(body: Record<string, unknown>): Promise<{ initBody: { expiresAt: number }; inviteExpiresAt: string }> {
+    const captured: { body?: string } = {};
+    const env = {
+      RENDEZVOUS: {
+        idFromName: (name: string) => name,
+        get: () => ({
+          fetch: async (_url: string, init?: RequestInit) => {
+            if (init?.body) captured.body = init.body as string;
+            return new Response(JSON.stringify({ ok: true }), { status: 200 });
+          },
+        }),
+      },
+    };
+    const response = await app.fetch(
+      new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify(body) }),
+      env,
+    );
+    const inviteJson = (await response.json()) as { expires_at: string };
+    return { initBody: JSON.parse(captured.body ?? "{}"), inviteExpiresAt: inviteJson.expires_at };
+  }
+
+  function expectExpiresNear(actual: number, expected: number) {
+    expect(actual).toBeGreaterThanOrEqual(expected - 1000);
+    expect(actual).toBeLessThanOrEqual(expected + 1000);
+  }
+
+  it("uses the default TTL when invite_ttl_ms is omitted", async () => {
+    const before = Date.now();
+    const { initBody } = await postInvite({ host_id: "h" });
+    expectExpiresNear(initBody.expiresAt, before + INVITE_TTL_MS);
+  });
+
+  it("respects a custom invite_ttl_ms within bounds", async () => {
+    const before = Date.now();
+    const custom = 15 * 60 * 1000;
+    const { initBody } = await postInvite({ host_id: "h", invite_ttl_ms: custom });
+    expectExpiresNear(initBody.expiresAt, before + custom);
+  });
+
+  it("clamps invite_ttl_ms below the minimum", async () => {
+    const before = Date.now();
+    const { initBody } = await postInvite({ host_id: "h", invite_ttl_ms: 1000 });
+    expectExpiresNear(initBody.expiresAt, before + MIN_INVITE_TTL_MS);
+  });
+
+  it("clamps invite_ttl_ms above the maximum", async () => {
+    const before = Date.now();
+    const { initBody } = await postInvite({ host_id: "h", invite_ttl_ms: 99 * MAX_INVITE_TTL_MS });
+    expectExpiresNear(initBody.expiresAt, before + MAX_INVITE_TTL_MS);
+  });
+
+  it("falls back to the default for non-finite invite_ttl_ms values", async () => {
+    const before = Date.now();
+    const { initBody } = await postInvite({ host_id: "h", invite_ttl_ms: "five minutes" });
+    expectExpiresNear(initBody.expiresAt, before + INVITE_TTL_MS);
   });
 });
 

@@ -5,12 +5,9 @@
  * helper functions for making authenticated requests against a RendezvousSession.
  */
 
-import { DEFAULT_MAX_PARTICIPANTS } from "../../src/constants";
+import { DEFAULT_MAX_PARTICIPANTS, INVITE_TTL_MS } from "../../src/constants";
 import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
 import { RendezvousSession } from "../../src/rendezvous";
-import type { RoomMessage } from "../../src/types";
-
-const INVITE_TTL_MS = 10 * 60 * 1000;
 
 /** Create a mock DurableObjectState with in-memory storage. */
 export function createMockState(): DurableObjectState {
@@ -120,12 +117,23 @@ export async function joinParticipant(fixture: RoomFixture, participantId: strin
   }));
 }
 
+export async function announceKey(fixture: RoomFixture, participantId: string): Promise<Response> {
+  return roomRequest(fixture, "", {
+    method: "POST",
+    headers: { ...authHeaders(fixture.joinSecret, participantId), "content-type": "application/json" },
+    body: JSON.stringify({ to: "all", intent: "key.exchange", body: { public_key: `${participantId}-raw-key` } }),
+  });
+}
+
 export function encryptedPayload(body: unknown): { encrypted_payload: string } {
   return { encrypted_payload: JSON.stringify(body) };
 }
 
 export function decodedPayload<T>(body: unknown): T {
-  return JSON.parse((body as { encrypted_payload: string }).encrypted_payload) as T;
+  const record = body as Record<string, unknown>;
+  // System messages (participant.joined etc.) have inline JSON body — return as-is
+  if (typeof record.encrypted_payload !== "string") return body as T;
+  return JSON.parse(record.encrypted_payload) as T;
 }
 
 export async function sendMessage(fixture: RoomFixture, participantId: string, to: string, body: unknown): Promise<Response> {

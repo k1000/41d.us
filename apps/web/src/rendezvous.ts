@@ -1,11 +1,13 @@
 import { json, respondNegotiated } from "./format";
 import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
+import { DEFAULT_EXTEND_MS, MAX_INVITE_TTL_MS, MIN_INVITE_TTL_MS } from "./constants";
 import { authenticateParticipant, requireHost, withAuth } from "./room/auth";
 import { RoomBoardController } from "./room/board-controller";
 import { RoomEvents } from "./room/events";
 import { roomExport, roomInfo, roomStatus } from "./room/info";
 import { RoomInitController } from "./room/init-controller";
 import { RoomMessageController } from "./room/message-controller";
+import { createRoomMessage } from "./room/messages";
 import { activeParticipants, isParticipantJoined } from "./room/participants";
 import { RoomParticipantController } from "./room/participant-controller";
 import { routeRoomRequest } from "./room/router";
@@ -59,6 +61,10 @@ export class RendezvousSession {
     url: URL,
     invite: InviteState,
   ): Promise<Response> | undefined {
+    if (request.method === "POST" && url.pathname.endsWith("/extend")) {
+      return this.handleExtendTtl(request, invite);
+    }
+
     return routeRoomRequest(request, url, invite, {
       read: () => this.messages.read(request, invite),
       send: () => this.messages.send(request, invite),
@@ -70,7 +76,7 @@ export class RendezvousSession {
       setBoardKey: (key) => this.board.setKey(request, invite, key),
       deleteBoardKey: (key) => this.board.deleteKey(request, invite, key),
       join: (participantId) =>
-        this.participants.join(request, invite, participantId),
+        this.handleJoin(request, invite, participantId),
       updateParticipant: (participantId) =>
         this.participants.update(request, invite, participantId),
       deleteParticipant: (participantId) =>
@@ -78,6 +84,62 @@ export class RendezvousSession {
       participants: () => this.handleParticipants(request, invite),
       status: () => this.handleStatus(request, invite),
       events: () => this.handleEvents(request, invite),
+    });
+  }
+
+  private async handleJoin(
+    request: Request,
+    invite: InviteState,
+    participantId: string,
+  ): Promise<Response> {
+    const response = await this.participants.join(request, invite, participantId);
+    if (response.status !== 200) return response;
+    const updated = await this.storage.getInvite();
+    if (!updated) return response;
+    const seq = updated.nextSeq + 1;
+    const message = createRoomMessage(
+      {
+        body: {
+          participant_id: participantId,
+          room_id: updated.roomId,
+          host_id: updated.hostId,
+          next: "Announce your encryption key (key.exchange), sync (read) to learn peer keys, then send encrypted messages.",
+        },
+        intent: "participant.joined",
+      },
+      "system",
+      "all",
+      seq,
+    );
+    const messages = [...updated.messages, message];
+    await this.storage.putInvite(patchInviteState(updated, { nextSeq: seq, messages }));
+    this.events.notifyMessage(message, seq);
+    return response;
+  }
+
+  private async handleExtendTtl(
+    request: Request,
+    invite: InviteState,
+  ): Promise<Response> {
+    const auth = await authenticateParticipant(request, invite);
+    if (auth instanceof Response) return auth;
+    if (auth.participantId !== invite.hostId) return json({ error: "only host can extend TTL" }, 403);
+
+    const rawExtend = (auth.body as { extend_ms?: unknown }).extend_ms;
+    const requested = typeof rawExtend === "number" && Number.isFinite(rawExtend)
+      ? Math.trunc(rawExtend)
+      : DEFAULT_EXTEND_MS;
+    const maxExtend = Date.now() + MAX_INVITE_TTL_MS - invite.expiresAt;
+    const extendMs = Math.min(Math.max(requested, MIN_INVITE_TTL_MS), Math.max(maxExtend, MIN_INVITE_TTL_MS));
+
+    const updated = patchInviteState(invite, {
+      expiresAt: invite.expiresAt + extendMs,
+    });
+    await this.storage.putInvite(updated);
+    return json({
+      ok: true,
+      extended_ms: extendMs,
+      expires_at: new Date(updated.expiresAt).toISOString(),
     });
   }
 

@@ -121,6 +121,22 @@ describe("HTTP integration", () => {
     );
     expect(joinB.status).toBe(200);
 
+    for (const id of ["agent-a", "agent-b"]) {
+      const keyRes = await app.fetch(
+        new Request(roomUrl, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${joinSecret}`,
+            "x-participant-id": id,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ to: "all", intent: "key.exchange", body: { public_key: `${id}-raw-key` } }),
+        }),
+        env,
+      );
+      expect(keyRes.status).toBe(200);
+    }
+
     // Send message as agent-a
     const sendRes = await app.fetch(
       new Request(roomUrl, {
@@ -132,7 +148,7 @@ describe("HTTP integration", () => {
         },
         body: JSON.stringify({
           to: "all",
-          body: { encrypted: true, ciphertext: "hello-cipher", iv: "hello-iv" },
+          body: { encrypted: true, ciphertext: "hello-cipher", iv: "hello-iv", keys: { "agent-a": { encrypted_key: "key", iv: "iv" }, "agent-b": { encrypted_key: "key", iv: "iv" } } },
           intent: "notify",
         }),
       }),
@@ -143,7 +159,7 @@ describe("HTTP integration", () => {
     expect(sendBody.ok).toBe(true);
     expect(sendBody.seq).toBeGreaterThan(0);
 
-    // Read as agent-b (skip room_purpose seq=1, read seq≥2)
+    // Read as agent-b (skip room_purpose and key exchange messages)
     const readRes = await app.fetch(
       new Request(`${roomUrl}?after=1`, {
         headers: { authorization: `Bearer ${joinSecret}`, "x-participant-id": "agent-b" },
@@ -152,9 +168,9 @@ describe("HTTP integration", () => {
     );
     expect(readRes.status).toBe(200);
     const readBody = await readRes.json<any>();
-    expect(readBody.messages.length).toBe(1);
-    expect(readBody.messages[0].from).toBe("agent-a");
-    expect(readBody.messages[0].intent).toBe("notify");
+    const notifications = readBody.messages.filter((message: any) => message.intent === "notify");
+    expect(notifications.length).toBe(1);
+    expect(notifications[0].from).toBe("agent-a");
   });
 
   it("rejects bad auth on room operations", async () => {

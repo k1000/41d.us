@@ -33,6 +33,8 @@ export interface CreateInviteOptions {
   hostId?: string;
   roomName?: string;
   maxParticipants?: number;
+  /** Invite TTL in milliseconds (default: 600000 = 10 min, min: 60000 = 1 min, max: 3600000 = 1 hr). */
+  inviteTtlMs?: number;
   /** Convenience: plain-text purpose string. Sends as `first_message: { text: ... }`. */
   purpose?: string;
   /** Raw first_message value (string or object). Overrides purpose. */
@@ -100,6 +102,7 @@ export async function createInvite(baseUrl = "https://41d.us", options: CreateIn
       host_id: options.hostId,
       room_name: options.roomName,
       max_participants: options.maxParticipants,
+      invite_ttl_ms: options.inviteTtlMs,
       purpose: options.purpose,
       first_message: options.firstMessage,
       board_schema: options.boardSchema,
@@ -112,7 +115,9 @@ export async function createInvite(baseUrl = "https://41d.us", options: CreateIn
 
 export async function joinRoom(invite: Invite, participantId: string, options: { model?: string; skills?: string[] } = {}): Promise<RoomClient> {
   const join = await request<{ ok: true; cursor: number }>(`${invite.room_url}/participants/${encodeURIComponent(participantId)}`, invite, { method: "PUT", body: Object.keys(options).length ? options : undefined });
-  return buildRoomClient(invite, participantId, join.cursor);
+  const room = await buildRoomClient(invite, participantId, join.cursor);
+  await room.announceKey();
+  return room;
 }
 
 /** Build a RoomClient for a participant already registered on the server (e.g. session restart). */
@@ -124,7 +129,7 @@ async function buildRoomClient(invite: Invite, participantId: string, initialCur
   let cursor = initialCursor;
   const cryptoSession = await createSdkCryptoSession(participantId);
 
-  return {
+  const client: RoomClient = {
     invite,
     participantId,
     get cursor() { return cursor; },
@@ -145,6 +150,7 @@ async function buildRoomClient(invite: Invite, participantId: string, initialCur
 
     async send(to, body, options = {}) {
       const isKeyExchange = options.intent === "key.exchange" || options.plain;
+      if (!isKeyExchange) await client.read({ all: true, includeSelf: true });
       const sendBody = isKeyExchange ? body : await cryptoSession.encryptForSend(body, to);
       return request(invite.room_url, invite, {
         method: "POST",
@@ -161,7 +167,10 @@ async function buildRoomClient(invite: Invite, participantId: string, initialCur
 
     async read(options = {}) {
       const url = new URL(invite.room_url);
-      if (options.all) url.searchParams.set("view", "all");
+      if (options.all) {
+        if (!url.pathname.endsWith("/")) url.pathname += "/";
+        url.searchParams.set("view", "all");
+      }
       if (options.includeSelf) url.searchParams.set("include_self", "true");
       const result = await request<{ cursor: number; messages: RoomMessage[] }>(url.toString(), invite, { participantId });
       cursor = result.cursor;
@@ -208,4 +217,5 @@ async function buildRoomClient(invite: Invite, participantId: string, initialCur
       return request(`${invite.room_url}/export`, invite, { participantId });
     },
   };
+  return client;
 }

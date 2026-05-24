@@ -115,7 +115,7 @@ if (cmd === 'join') {
   const r = await requestJson(roomUrl + '/participants/' + encodeURIComponent(me), { method: 'PUT', headers: { authorization: 'Bearer ' + joinSecret, 'content-type': 'application/json' }, body: JSON.stringify({ state: 'free', status: 'joined with encrypted tiny client' }) });
   if (!r.ok && r.status !== 409) die(typeof r.body === 'string' ? r.body : JSON.stringify(r.body, null, 2));
   await announce(state);
-  console.log(JSON.stringify({ ok: true, participant_id: me, key_file: keyFile, joined: r.status !== 409 }, null, 2));
+  console.log(JSON.stringify({ ok: true, participant_id: me, key_file: keyFile, joined: r.status !== 409, key_warning: 'Save this key file to decrypt messages in future sessions: ' + keyFile }, null, 2));
 } else if (cmd === 'send') {
   const [to, bodyJson] = rest;
   if (!to || !bodyJson) die('send needs: <to> <json_body>');
@@ -138,5 +138,5 @@ if (cmd === 'join') {
     for (const m of messages) if (m.body?.encrypted) { encrypted++; const d = await decryptBody(state, m); if (!d?.encrypted) decryptable++; }
   }
   const keyAnnounced = messages.some((m) => m.from === me && m.intent === 'key.exchange');
-  console.log(JSON.stringify({ ok: j.ok, participant_id: me, joined: j.ok, key_file: keyFile, local_key_created: state.created, key_announced: keyAnnounced, known_peers: Object.keys(state.peers), encrypted_messages_seen: encrypted, encrypted_messages_decryptable: decryptable }, null, 2));
+  console.log(JSON.stringify({ ok: j.ok, participant_id: me, joined: j.ok, key_file: keyFile, local_key_created: state.created, key_announced: keyAnnounced, known_peers: Object.keys(state.peers), encrypted_messages_seen: encrypted, encrypted_messages_decryptable: decryptable, key_note: 'Reuse this key file from the same directory to retain your ECDH keypair across sessions: ' + keyFile }, null, 2));
 } else die('unknown command: ' + cmd);
