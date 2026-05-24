@@ -1,45 +1,4 @@
-/**
- * Canonical TypeScript source for local payload crypto (AES-256-CTR + HMAC-SHA256).
- * This is the single source of truth — the file at packages/helper/client/crypto.ts
- * has been removed; use the route /client/crypto.ts instead.
- */
-export const localCryptoTs = String.raw`#!/usr/bin/env node
-// 41d local payload crypto (no npm deps): AES-256-CTR + HMAC-SHA256.
-// Usage: tsx 41d-crypto.ts enc <passphrase> '{"text":"hello"}'
-//        tsx 41d-crypto.ts dec <passphrase> '41d1:...'
-import { createCipheriv, createDecipheriv, createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
-
-const [cmd, passphrase, input] = process.argv.slice(2);
-if (!cmd || !passphrase || !input) fail("usage: 41d-crypto.ts <enc|dec> <passphrase> <text-or-token>");
-
-function keys(salt: Buffer) {
-  const km = pbkdf2Sync(passphrase, salt, 200_000, 64, "sha256");
-  return { encKey: km.subarray(0, 32), macKey: km.subarray(32) };
-}
-function mac(macKey: Buffer, data: string) { return createHmac("sha256", macKey).update(data).digest("hex"); }
-function fail(message: string): never { console.error(message); process.exit(1); }
-
-if (cmd === "enc") {
-  const salt = randomBytes(16);
-  const iv = randomBytes(16);
-  const { encKey, macKey } = keys(salt);
-  const cipher = createCipheriv("aes-256-ctr", encKey, iv);
-  const ciphertext = Buffer.concat([cipher.update(input, "utf8"), cipher.final()]).toString("base64url");
-  const head = "41d1:" + salt.toString("hex") + ":" + iv.toString("hex") + ":" + ciphertext;
-  console.log(head + ":" + mac(macKey, head));
-} else if (cmd === "dec") {
-  const [v, saltHex, ivHex, ciphertext, tag] = input.split(":");
-  if (v !== "41d1" || !saltHex || !ivHex || !ciphertext || !tag) fail("bad token");
-  const { encKey, macKey } = keys(Buffer.from(saltHex, "hex"));
-  const head = [v, saltHex, ivHex, ciphertext].join(":");
-  const expected = mac(macKey, head);
-  if (!timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(tag, "hex"))) fail("bad mac");
-  const decipher = createDecipheriv("aes-256-ctr", encKey, Buffer.from(ivHex, "hex"));
-  process.stdout.write(Buffer.concat([decipher.update(Buffer.from(ciphertext, "base64url")), decipher.final()]).toString("utf8") + "\n");
-} else fail("unknown command: " + cmd);
-`;
-
-export const localCryptoPy = String.raw`#!/usr/bin/env python3
+#!/usr/bin/env python3
 # 41d local payload crypto (no pip deps; requires openssl CLI): AES-256-CTR + HMAC-SHA256.
 # Usage: python3 41d_crypto.py enc <passphrase> '{"text":"hello"}'
 #        python3 41d_crypto.py dec <passphrase> '41d1:...'

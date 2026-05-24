@@ -1,6 +1,8 @@
 import type { Context } from "hono";
-import { hashJoinSecret, randomBase64Url } from "../../../packages/sdk/src/crypto";
-import { sanitizeId, DEFAULT_MAX_PARTICIPANTS, MAX_PARTICIPANTS_HARD_LIMIT, INVITE_TTL_MS, MIN_INVITE_TTL_MS, MAX_INVITE_TTL_MS } from "./constants";
+import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
+import { INVITE_TTL_MS, MIN_INVITE_TTL_MS, MAX_INVITE_TTL_MS } from "./constants";
+import { normalizeRoomId, normalizeHostId, normalizeRoomName, normalizeMaxParticipants } from "./validation";
+import { buildApiLinks, buildQuickstart } from "./invite-quickstart";
 import type { Env, InitPayload } from "./types";
 
 export interface CreateInviteBody {
@@ -84,24 +86,6 @@ function normalizeInviteTtl(value: number | undefined): number {
   return Math.min(Math.max(Math.trunc(value), MIN_INVITE_TTL_MS), MAX_INVITE_TTL_MS);
 }
 
-function normalizeRoomId(value: string | undefined): string {
-  const proposed = typeof value === "string" ? sanitizeId(value.trim()) : "";
-  return proposed || randomBase64Url(16);
-}
-
-function normalizeHostId(value: string | undefined): string {
-  return sanitizeId((value ?? "host").trim()) || "host";
-}
-
-function normalizeRoomName(value: string | undefined): string {
-  const roomName = typeof value === "string" ? value.trim() : "";
-  return roomName ? roomName.slice(0, 80) : "41d rendezvous";
-}
-
-function normalizeMaxParticipants(value: number | undefined): number {
-  return Math.min(Math.max(Math.trunc(value ?? DEFAULT_MAX_PARTICIPANTS), 2), MAX_PARTICIPANTS_HARD_LIMIT);
-}
-
 function normalizeFirstMessage(value: string | Record<string, unknown> | undefined, roomName: string): Record<string, unknown> | undefined {
   if (typeof value === "string") {
     const text = value.trim();
@@ -139,53 +123,5 @@ function buildInviteResponse(args: NormalizedInviteRequest & { requestUrl: URL; 
     quickstart: buildQuickstart(args.roomUrl, args.joinSecret, args.hostId, args.roomName),
     skill: `${args.requestUrl.protocol}//${args.requestUrl.host}/skill/SKILL.md`,
     expires_at: new Date(args.expiresAt).toISOString(),
-  };
-}
-
-function buildApiLinks(roomUrl: string) {
-  const origin = new URL(roomUrl).origin;
-  return {
-    room: roomUrl,
-    join: `${roomUrl}/participants/{participant_id}`,
-    send: roomUrl,
-    read: roomUrl,
-    read_all: `${origin}/r/{room_id}/?view=all`,
-    events: `${roomUrl}/events`,
-    board: `${roomUrl}/board`,
-    participants: `${roomUrl}/participants`,
-    status: `${roomUrl}/status`,
-    export: `${roomUrl}/export`,
-    leave: `${roomUrl}/participants/{participant_id}`,
-    kick: `${roomUrl}/participants/{target_id}`,
-    close: roomUrl,
-  };
-}
-
-function buildQuickstart(roomUrl: string, joinSecret: string, defaultName: string, roomName = "room") {
-  const origin = new URL(roomUrl).origin;
-  const clientScriptUrl = `${origin}/client/41d.js`;
-  const cryptoShUrl = `${origin}/client/crypto.sh`;
-  const roomFile = `${sanitizeId(roomName) || "room"}.json`;
-  return {
-    vars: `ROOM_URL='${roomUrl}'\nJOIN_SECRET='${joinSecret}'\nME='${defaultName}'`,
-    join_diagnostic_only: `curl -sS -X PUT '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"model":"your-model","skills":["typescript","review"]}'`,
-    create_room_file: `curl -fsSL '${clientScriptUrl}' | node - create '${origin}' '{"host_id":"${defaultName}","room_name":"${roomName}"}' > ${roomFile}`,
-    join: `curl -fsSL '${clientScriptUrl}' | node - join '${roomUrl}' '${joinSecret}' '${defaultName}'`,
-    join_from_room_file: `curl -fsSL '${clientScriptUrl}' | node - join ${roomFile} '${defaultName}'`,
-    set_busy: `curl -sS -X PATCH '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"state":"busy","status":"Working on the room task","model":"your-model","skills":["typescript","review"]}'`,
-    set_free: `curl -sS -X PATCH '${roomUrl}/participants/${encodeURIComponent(defaultName)}' -H 'authorization: Bearer ${joinSecret}' -H 'content-type: application/json' -d '{"state":"free","status":"Available"}'`,
-    read_recent: `curl -sS '${roomUrl}' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
-    read_all: `curl -sS '${roomUrl}/?view=all' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
-    send_encrypted: `curl -fsSL '${clientScriptUrl}' | node - send '${roomUrl}' '${joinSecret}' '${defaultName}' all '{"text":"hello"}'`,
-    send_from_room_file: `curl -fsSL '${clientScriptUrl}' | node - send ${roomFile} '${defaultName}' all '{"text":"hello"}'`,
-    read_from_room_file: `curl -fsSL '${clientScriptUrl}' | node - read ${roomFile} '${defaultName}'`,
-    doctor_from_room_file: `curl -fsSL '${clientScriptUrl}' | node - doctor ${roomFile} '${defaultName}'`,
-    send_local_encrypted_payload: `TOKEN=$(curl -fsSL '${cryptoShUrl}' | bash -s -- enc "$PAYLOAD_PASSPHRASE" '{"text":"hello"}'); curl -sS -X POST '${roomUrl}' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}' -H 'content-type: application/json' -d '{"to":"all","body":{"encrypted_payload":"'"$TOKEN"'"}}'`,
-    events: `curl -N '${roomUrl}/events' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
-    board_read: `curl -sS '${roomUrl}/board' -H 'authorization: Bearer ${joinSecret}'`,
-    board_set: `curl -sS -X PUT '${roomUrl}/board/tasks' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}' -H 'content-type: application/json' -d '{"task-1":{"title":"Example","state":"todo"}}'`,
-    export: `curl -sS '${roomUrl}/export' -H 'authorization: Bearer ${joinSecret}' -H 'x-participant-id: ${defaultName}'`,
-    participants: `curl -sS '${roomUrl}/participants' -H 'authorization: Bearer ${joinSecret}'`,
-    status: `curl -sS '${roomUrl}/status' -H 'authorization: Bearer ${joinSecret}'`,
   };
 }

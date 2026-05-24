@@ -61,7 +61,7 @@ async function aesDecryptBytes(key, ciphertext, iv) { return subtle.decrypt({ na
 async function aesDecrypt(key, ciphertext, iv) { return dec.decode(await aesDecryptBytes(key, ciphertext, iv)); }
 async function makeKeys() { return subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']); }
 async function exportPublic(key) { return b64u(new Uint8Array(await subtle.exportKey('raw', key))); }
-async function importPublic(raw) { return subtle.importKey('raw', unb64u(raw), { name: 'ECDH', namedCurve: 'P-256' }, true, []); }
+async function importPublic(raw) { if (typeof raw === 'object' && raw !== null) return subtle.importKey('jwk', raw, { name: 'ECDH', namedCurve: 'P-256' }, true, []); return subtle.importKey('raw', unb64u(raw), { name: 'ECDH', namedCurve: 'P-256' }, true, []); }
 async function derive(privateKey, publicKey) { return subtle.deriveKey({ name: 'ECDH', public: publicKey }, privateKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']); }
 async function loadState() {
   try {
@@ -110,33 +110,46 @@ async function joined() {
   return { ok: participants.some((p) => p.id === me), status: r.status, participants };
 }
 
+/**
+ * Command dispatch: each handler receives (state, roomUrl, joinSecret, me, rest, headers, keyFile).
+ */
+const COMMANDS = {
+  async join(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
+    const r = await requestJson(roomUrl + '/participants/' + encodeURIComponent(me), { method: 'PUT', headers: { authorization: 'Bearer ' + joinSecret, 'content-type': 'application/json' }, body: JSON.stringify({ state: 'free', status: 'joined with encrypted tiny client' }) });
+    if (!r.ok && r.status !== 409) die(typeof r.body === 'string' ? r.body : JSON.stringify(r.body, null, 2));
+    await announce(state);
+    console.log(JSON.stringify({ ok: true, participant_id: me, key_file: keyFile, joined: r.status !== 409, key_warning: 'Save this key file to decrypt messages in future sessions: ' + keyFile }, null, 2));
+  },
+  async send(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
+    const [to, bodyJson] = rest;
+    if (!to || !bodyJson) die('send needs: <to> <json_body>');
+    await syncKeys(state);
+    await announce(state);
+    console.log(JSON.stringify(await post({ to, body: await encryptBody(state, to, JSON.parse(bodyJson)) }), null, 2));
+  },
+  async read(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
+    const messages = await syncKeys(state);
+    const out = [];
+    for (const m of messages) out.push({ ...m, body: await decryptBody(state, m) });
+    console.log(JSON.stringify(out, null, 2));
+  },
+  async doctor(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
+    const j = await joined();
+    let messages = [];
+    let decryptable = 0;
+    let encrypted = 0;
+    if (j.ok) {
+      await announce(state).catch(() => undefined);
+      messages = await syncKeys(state);
+      for (const m of messages) if (m.body?.encrypted) { encrypted++; const d = await decryptBody(state, m); if (!d?.encrypted) decryptable++; }
+    }
+    const keyAnnounced = messages.some((m) => m.from === me && m.intent === 'key.exchange');
+    console.log(JSON.stringify({ ok: j.ok, participant_id: me, joined: j.ok, key_file: keyFile, local_key_created: state.created, key_announced: keyAnnounced, known_peers: Object.keys(state.peers), encrypted_messages_seen: encrypted, encrypted_messages_decryptable: decryptable, key_note: 'Reuse this key file from the same directory to retain your ECDH keypair across sessions: ' + keyFile }, null, 2));
+  },
+};
+
+const handler = COMMANDS[cmd];
+if (!handler) die('unknown command: ' + cmd + '. Usage: create|join|send|read|inbox|doctor');
+
 const state = await loadState();
-if (cmd === 'join') {
-  const r = await requestJson(roomUrl + '/participants/' + encodeURIComponent(me), { method: 'PUT', headers: { authorization: 'Bearer ' + joinSecret, 'content-type': 'application/json' }, body: JSON.stringify({ state: 'free', status: 'joined with encrypted tiny client' }) });
-  if (!r.ok && r.status !== 409) die(typeof r.body === 'string' ? r.body : JSON.stringify(r.body, null, 2));
-  await announce(state);
-  console.log(JSON.stringify({ ok: true, participant_id: me, key_file: keyFile, joined: r.status !== 409, key_warning: 'Save this key file to decrypt messages in future sessions: ' + keyFile }, null, 2));
-} else if (cmd === 'send') {
-  const [to, bodyJson] = rest;
-  if (!to || !bodyJson) die('send needs: <to> <json_body>');
-  await syncKeys(state);
-  await announce(state);
-  console.log(JSON.stringify(await post({ to, body: await encryptBody(state, to, JSON.parse(bodyJson)) }), null, 2));
-} else if (cmd === 'read' || cmd === 'inbox') {
-  const messages = await syncKeys(state);
-  const out = [];
-  for (const m of messages) out.push({ ...m, body: await decryptBody(state, m) });
-  console.log(JSON.stringify(out, null, 2));
-} else if (cmd === 'doctor') {
-  const j = await joined();
-  let messages = [];
-  let decryptable = 0;
-  let encrypted = 0;
-  if (j.ok) {
-    await announce(state).catch(() => undefined);
-    messages = await syncKeys(state);
-    for (const m of messages) if (m.body?.encrypted) { encrypted++; const d = await decryptBody(state, m); if (!d?.encrypted) decryptable++; }
-  }
-  const keyAnnounced = messages.some((m) => m.from === me && m.intent === 'key.exchange');
-  console.log(JSON.stringify({ ok: j.ok, participant_id: me, joined: j.ok, key_file: keyFile, local_key_created: state.created, key_announced: keyAnnounced, known_peers: Object.keys(state.peers), encrypted_messages_seen: encrypted, encrypted_messages_decryptable: decryptable, key_note: 'Reuse this key file from the same directory to retain your ECDH keypair across sessions: ' + keyFile }, null, 2));
-} else die('unknown command: ' + cmd);
+await handler(state, { roomUrl, joinSecret, me, rest, headers, keyFile });

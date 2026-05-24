@@ -2,6 +2,7 @@ import type { RoomMessage } from "../types";
 import { visibleTo } from "./messages";
 
 const SSE_HEARTBEAT_MS = 25_000;
+const SSE_SWEEP_INTERVAL = 50;
 const ENCODER = new TextEncoder();
 
 interface EventSubscriber {
@@ -10,8 +11,15 @@ interface EventSubscriber {
   includeSelf: boolean;
 }
 
-export class RoomEvents {
+export interface RoomEventBus {
+  subscribe(participantId: string, includeSelf: boolean, lastSeq: number): Response;
+  notifyMessage(message: RoomMessage, lastSeq: number): void;
+  notifyBoard(keys: string | string[], updatedBy: string): void;
+}
+
+export class RoomEvents implements RoomEventBus {
   private readonly subscribers = new Map<string, EventSubscriber>();
+  private notificationCount = 0;
 
   subscribe(participantId: string, includeSelf: boolean, lastSeq: number): Response {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -21,11 +29,18 @@ export class RoomEvents {
         subscriberId = crypto.randomUUID();
         this.subscribers.set(subscriberId, { participantId, controller, includeSelf });
         enqueueSse(controller, "ready", { participant_id: participantId, last_seq: lastSeq });
-        interval = setInterval(() => enqueueSse(controller, "ping", { ts: new Date().toISOString() }), SSE_HEARTBEAT_MS);
+        interval = setInterval(() => {
+          try {
+            enqueueSse(controller, "ping", { ts: new Date().toISOString() });
+          } catch {
+            if (interval) clearInterval(interval);
+            if (subscriberId) this.subscribers.delete(subscriberId);
+          }
+        }, SSE_HEARTBEAT_MS);
       },
       cancel: () => {
         if (interval) clearInterval(interval);
-        this.subscribers.delete(subscriberId);
+        if (subscriberId) this.subscribers.delete(subscriberId);
       },
     });
 
@@ -38,6 +53,7 @@ export class RoomEvents {
   }
 
   notifyMessage(message: RoomMessage, lastSeq: number): void {
+    this.maybeSweep();
     for (const [id, subscriber] of this.subscribers) {
       if (!subscriber.includeSelf && message.from === subscriber.participantId) continue;
       if (!visibleTo(message, subscriber.participantId)) continue;
@@ -46,8 +62,24 @@ export class RoomEvents {
   }
 
   notifyBoard(keys: string | string[], updatedBy: string): void {
+    this.maybeSweep();
     for (const [id, subscriber] of this.subscribers) {
       this.enqueueOrDelete(id, subscriber.controller, "board", { keys: Array.isArray(keys) ? keys : [keys], updated_by: updatedBy });
+    }
+  }
+
+  /**
+   * Periodically sweep stale subscribers whose controllers silently
+   * disconnected without triggering the cancel callback.
+   */
+  private maybeSweep(): void {
+    if (++this.notificationCount % SSE_SWEEP_INTERVAL !== 0) return;
+    for (const [id, subscriber] of this.subscribers) {
+      try {
+        enqueueSse(subscriber.controller, "ping", { ts: new Date().toISOString() });
+      } catch {
+        this.subscribers.delete(id);
+      }
     }
   }
 
@@ -61,5 +93,7 @@ export class RoomEvents {
 }
 
 function enqueueSse(controller: ReadableStreamDefaultController<Uint8Array>, event: string, data: unknown): void {
-  controller.enqueue(ENCODER.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+  const json = JSON.stringify(data);
+  const lines = json.split("\n").map((line) => `data: ${line}`).join("\n");
+  controller.enqueue(ENCODER.encode(`event: ${event}\n${lines}\n\n`));
 }

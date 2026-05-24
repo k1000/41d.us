@@ -1,6 +1,6 @@
 import { json, type GuardResult } from "../format";
 import type { InviteState, Participant } from "../types";
-import { sanitizeId } from "../constants";
+import { normalizeState, normalizeStatus, normalizeModel, normalizeSkills } from "../validation";
 
 interface ParticipantProfile {
   state?: "free" | "busy";
@@ -29,13 +29,13 @@ export function isParticipantJoined(participants: Record<string, Participant>, p
 }
 
 export function parseParticipantProfile(body: Record<string, unknown>): ParticipantProfile | Response {
-  const state = normalizeParticipantState(body.state);
+  const state = normalizeState(body.state);
   if (state instanceof Response) return state;
-  const status = normalizeParticipantStatus(body.status);
+  const status = normalizeStatus(body.status);
   if (status instanceof Response) return status;
-  const model = normalizeParticipantModel(body.model);
+  const model = normalizeModel(body.model);
   if (model instanceof Response) return model;
-  const skills = normalizeParticipantSkills(body.skills);
+  const skills = normalizeSkills(body.skills);
   if (skills instanceof Response) return skills;
   return { state, status, model, skills };
 }
@@ -71,7 +71,7 @@ function updateParticipantProfile(participant: Participant, profile: Participant
 export function withUpdatedParticipant(invite: InviteState, participantId: string, profile: ParticipantProfile): InviteState {
   const participants = { ...invite.participants };
   participants[participantId] = updateParticipantProfile(participants[participantId], profile);
-  return { ...invite, participants } satisfies InviteState;
+  return { ...invite, participants };
 }
 
 export function withReadReceipt(invite: InviteState, participantId: string, seq: number): InviteState {
@@ -84,53 +84,17 @@ export function withReadReceipt(invite: InviteState, participantId: string, seq:
     last_seen_at: now,
     last_read_seq: Math.max(participant.last_read_seq, seq),
   };
-  return { ...invite, participants } satisfies InviteState;
+  return { ...invite, participants };
 }
 
 export function withLeftParticipant(invite: InviteState, participantId: string): InviteState {
   const participants = { ...invite.participants };
   if (participants[participantId]) participants[participantId] = { ...participants[participantId], left_at: new Date().toISOString() };
-  return { ...invite, participants } satisfies InviteState;
+  return { ...invite, participants };
 }
 
 export function withKickedParticipant(invite: InviteState, targetId: string): InviteState | Response {
   if (targetId === invite.hostId) return json({ error: "host cannot kick themselves" }, 400);
   if (!isParticipantJoined(invite.participants, targetId)) return json({ error: "target participant is not active" }, 404);
   return withLeftParticipant(invite, targetId);
-}
-
-export function requireParticipantId(value: unknown): string | Response {
-  const id = typeof value === "string" ? value.trim() : "";
-  if (!id) return json({ error: "participant_id is required" }, 400);
-  return sanitizeId(id);
-}
-
-function normalizeParticipantState(value: unknown): "free" | "busy" | undefined | Response {
-  if (value === undefined) return undefined;
-  if (value === "free" || value === "busy") return value;
-  return json({ error: "state must be 'free' or 'busy'" }, 400);
-}
-
-function normalizeParticipantStatus(value: unknown): string | undefined | Response {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") return json({ error: "status must be a string" }, 400);
-  return value.trim().slice(0, 240);
-}
-
-function normalizeParticipantModel(value: unknown): string | undefined | Response {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") return json({ error: "model must be a string" }, 400);
-  const model = value.trim().slice(0, 120);
-  return model || undefined;
-}
-
-function normalizeParticipantSkills(value: unknown): string[] | undefined | Response {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) return json({ error: "skills must be an array of strings" }, 400);
-  const skills = value
-    .filter((skill): skill is string => typeof skill === "string")
-    .map((skill) => skill.trim().slice(0, 80))
-    .filter(Boolean)
-    .slice(0, 32);
-  return [...new Set(skills)];
 }

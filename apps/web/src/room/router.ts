@@ -5,6 +5,7 @@ interface RoomRouteHandlers {
   send(): Promise<Response>;
   close(): Promise<Response>;
   export(): Promise<Response>;
+  extend(): Promise<Response>;
   getBoard(): Promise<Response>;
   patchBoard(): Promise<Response>;
   getBoardKey(key: string): Promise<Response>;
@@ -78,5 +79,6 @@ function routeParticipants(request: Request, url: URL, handlers: RoomRouteHandle
 function routeMeta(request: Request, url: URL, handlers: RoomRouteHandlers): Promise<Response> | undefined {
   if (url.pathname.endsWith("/status") && request.method === "GET") return handlers.status();
   if (url.pathname.endsWith("/events") && request.method === "GET") return handlers.events();
+  if (url.pathname.endsWith("/extend") && request.method === "POST") return handlers.extend();
   return undefined;
 }

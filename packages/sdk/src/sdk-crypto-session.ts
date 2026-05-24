@@ -1,3 +1,8 @@
+// NOTE: The standalone 41d.js client (packages/helper/src/client-script.ts) has
+// an equivalent inline implementation of encryptForSend/decryptMessageBody.
+// Keep the EncryptedBody format, key derivation, and wrapping scheme in sync.
+// See apps/web/test/crypto-primitives.test.ts for conformance tests.
+
 import {
   decryptWithKey,
   deriveSharedKey,

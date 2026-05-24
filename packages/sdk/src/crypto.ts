@@ -1,4 +1,8 @@
-// ── Join-secret helpers ─────────────────────────────────────────
+// NOTE: The standalone 41d.js client (packages/helper/src/client-script.ts / /client/41d.js)
+// contains an inline copy of these ECDH P-256 + AES-256-GCM crypto primitives because
+// it must be pipeable via `curl | node -` with zero npm dependencies.
+// Keep the algorithm choices, base64url encoding, and EncryptedBody format in sync.
+// See apps/web/test/crypto-primitives.test.ts for conformance tests.
 
 export function randomBase64Url(byteLength: number): string {
   const bytes = new Uint8Array(byteLength);
@@ -11,8 +15,6 @@ export async function hashJoinSecret(roomId: string, secret: string): Promise<st
   const digest = await crypto.subtle.digest("SHA-256", input);
   return base64Url(new Uint8Array(digest));
 }
-
-// ── E2E encryption primitives ───────────────────────────────────
 
 export interface EncryptedBody {
   encrypted: true;
@@ -120,8 +122,6 @@ export async function unwrapKey(encryptedKeyB64: string, ivB64: string, sharedKe
     ["decrypt"],
   );
 }
-
-// ── Internal helpers ────────────────────────────────────────────
 
 function base64Url(bytes: Uint8Array): string {
   let binary = "";

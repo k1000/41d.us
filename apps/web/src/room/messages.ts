@@ -1,6 +1,6 @@
 import { MAX_BODY_BYTES, MAX_MESSAGES } from "../constants";
 import { isEncryptedBody } from "@41d/sdk/crypto";
-import { json } from "../format";
+import { json, type GuardResult } from "../format";
 import type { InitPayload, InviteState, Recipient, RoomMessage } from "../types";
 import { activeParticipants, isParticipantJoined } from "./participants";
 
@@ -103,7 +103,7 @@ function isOpaqueEncryptedBody(body: unknown): boolean {
   return false;
 }
 
-function validateEncryptedProtocol(body: Record<string, unknown>, participantId: string, to: Recipient, invite: InviteState): Response | undefined {
+function validateBodyIsEncrypted(body: Record<string, unknown>): GuardResult {
   if (isAllowedPlainProtocolMessage(body)) return undefined;
   if (isOpaqueEncryptedBody(body.body)) return undefined;
   if (!isEncryptedBody(body.body)) {
@@ -112,7 +112,10 @@ function validateEncryptedProtocol(body: Record<string, unknown>, participantId:
       hint: "Use /client/41d.js for send/read, or send an encrypted SDK body / encrypted_payload token.",
     }, 400);
   }
+  return undefined;
+}
 
+function validateSenderKeyAnnounced(participantId: string, invite: InviteState): GuardResult {
   const announced = announcedKeyParticipants(invite);
   if (!announced.has(participantId)) {
     return json({
@@ -120,8 +123,12 @@ function validateEncryptedProtocol(body: Record<string, unknown>, participantId:
       hint: "Join with the encrypted client or send intent=key.exchange before sending encrypted messages.",
     }, 409);
   }
+  return undefined;
+}
 
+function validateRecipientKeysAnnounced(to: Recipient, invite: InviteState): GuardResult {
   const recipients = recipientIdsFor(to, invite);
+  const announced = announcedKeyParticipants(invite);
   const missingKeys = recipients.filter((id) => !announced.has(id));
   if (missingKeys.length > 0) {
     return json({
@@ -130,19 +137,46 @@ function validateEncryptedProtocol(body: Record<string, unknown>, participantId:
       hint: "Every recipient, including the host for broadcast rooms, must join/announce its ECDH key before encrypted messages can be sent to it.",
     }, 409);
   }
+  return undefined;
+}
 
-  if (to === "all" || Array.isArray(to)) {
-    const requiredWrappedKeys = [...new Set([...recipients, participantId])];
-    const wrappedKeys = body.body.keys ?? {};
-    const missingWrappedKeys = requiredWrappedKeys.filter((id) => !wrappedKeys[id]);
-    if (missingWrappedKeys.length > 0) {
-      return json({
-        error: "encrypted message is missing wrapped recipient keys",
-        missing_participants: missingWrappedKeys,
-        hint: "Read/sync first so the client sees each participant's key.exchange message, then send again.",
-      }, 409);
-    }
+function validateWrappedKeysPresent(body: Record<string, unknown>, to: Recipient, participantId: string, invite: InviteState): GuardResult {
+  if (!(to === "all" || Array.isArray(to))) return undefined;
+
+  const recipients = recipientIdsFor(to, invite);
+  const requiredWrappedKeys = [...new Set([...recipients, participantId])];
+  const wrappedKeys: Record<string, unknown> = ((body.body as Record<string, unknown>)?.keys ?? {}) as Record<string, unknown>;
+  const missingWrappedKeys = requiredWrappedKeys.filter((id) => !wrappedKeys[id]);
+
+  if (missingWrappedKeys.length > 0) {
+    return json({
+      error: "encrypted message is missing wrapped recipient keys",
+      missing_participants: missingWrappedKeys,
+      hint: "Read/sync first so the client sees each participant's key.exchange message, then send again.",
+    }, 409);
   }
+  return undefined;
+}
+
+function validateEncryptedProtocol(body: Record<string, unknown>, participantId: string, to: Recipient, invite: InviteState): GuardResult {
+  let err: GuardResult;
+
+  err = validateBodyIsEncrypted(body);
+  if (err) return err;
+
+  // key.exchange and opaque pre-encrypted bodies bypass key/wrapped-key checks
+  // (key.exchange is how senders announce their key; opaque bodies are decrypted client-side).
+  if (isAllowedPlainProtocolMessage(body)) return undefined;
+  if (isOpaqueEncryptedBody(body.body)) return undefined;
+
+  err = validateSenderKeyAnnounced(participantId, invite);
+  if (err) return err;
+
+  err = validateRecipientKeysAnnounced(to, invite);
+  if (err) return err;
+
+  err = validateWrappedKeysPresent(body, to, participantId, invite);
+  if (err) return err;
 
   return undefined;
 }

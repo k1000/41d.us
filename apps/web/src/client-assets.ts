@@ -1,37 +1,14 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { renderMarkdownPage } from "./format";
+import { renderMarkdownPage } from "./format-markdown";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-/**
- * MCP server documentation markdown.
- * Source file: apps/web/src/mcp.md
- */
-export const mcpMarkdown: string = readFileSync(
-  join(__dirname, "mcp.md"),
-  "utf-8",
-);
-
-/**
- * SDK/client usage markdown, served at /client/SDK.md.
- * Source file: apps/web/src/sdk.md
- */
-export const sdkMarkdown: string = readFileSync(
-  join(__dirname, "sdk.md"),
-  "utf-8",
-);
-
-/**
- * Orchestration conventions markdown, served at /client/ORCHESTRATION.md.
- * Source file: apps/web/src/orchestration.md
- */
-export const orchestrationMarkdown: string = readFileSync(
-  join(__dirname, "orchestration.md"),
-  "utf-8",
-);
+export const mcpMarkdown: string = readFileSync(join(__dirname, "mcp.md"), "utf-8");
+export const sdkMarkdown: string = readFileSync(join(__dirname, "sdk.md"), "utf-8");
+export const orchestrationMarkdown: string = readFileSync(join(__dirname, "orchestration.md"), "utf-8");
 
 export function clientPage(): string {
   return renderMarkdownPage(

@@ -1,24 +1,15 @@
 import { Validator } from "@cfworker/json-schema";
-import { MAX_BOARD_VALUE_BYTES } from "../constants";
+import { MAX_BOARD_VALUE_BYTES, sanitizeId } from "../constants";
 import { json, type GuardResult } from "../format";
-import { sanitizeId } from "../constants";
+import { normalizeBoardKey, MAX_BOARD_KEY_LENGTH } from "../validation";
 import type { BoardEntry, InviteState } from "../types";
 
 const ENCODER = new TextEncoder();
-
-// ── Helpers ─────────────────────────────────────────────────────
 
 function unwrapBoard(board: Record<string, BoardEntry>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(board).map(([key, entry]) => [key, entry.value]));
 }
 
-function normalizeBoardKey(value: unknown): string | Response {
-  const key = typeof value === "string" ? value.trim() : "";
-  if (!key) return json({ error: "board key is required" }, 400);
-  const normalized = sanitizeId(key).slice(0, 80);
-  if (!normalized) return json({ error: "invalid board key" }, 400);
-  return normalized;
-}
 
 function makeBoardEntry(value: unknown, updatedBy: string): BoardEntry | Response {
   const size = ENCODER.encode(JSON.stringify(value ?? null)).length;
@@ -27,8 +18,6 @@ function makeBoardEntry(value: unknown, updatedBy: string): BoardEntry | Respons
   }
   return { value: value ?? null, updated_by: updatedBy, updated_at: new Date().toISOString() };
 }
-
-// ── Pure data operations ────────────────────────────────────────
 
 export function getBoard(invite: InviteState): Response {
   return json({ board: invite.board, board_schema: invite.boardSchema ?? null });
@@ -91,8 +80,6 @@ export function deleteBoardKeyData(
   return { board, key };
 }
 
-// ── Exported for init ───────────────────────────────────────────
-
 export function wrapInitialBoard(
   initialBoard: Record<string, unknown> | undefined,
   updatedBy: string,
@@ -100,7 +87,7 @@ export function wrapInitialBoard(
   if (!initialBoard) return {};
   const board: Record<string, BoardEntry> = {};
   for (const [rawKey, value] of Object.entries(initialBoard)) {
-    const key = sanitizeId(rawKey).slice(0, 80);
+    const key = sanitizeId(rawKey).slice(0, MAX_BOARD_KEY_LENGTH);
     if (!key) continue;
     board[key] = { value, updated_by: updatedBy, updated_at: new Date().toISOString() };
   }

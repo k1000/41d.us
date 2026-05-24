@@ -13,55 +13,13 @@ import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { createInvite, joinRoom, resumeRoom } from "@41d/sdk";
-import type { Invite, RoomClient } from "@41d/sdk";
+import { createInvite } from "@41d/sdk";
+import { getOrCreateSession, clearRoomSessions } from "@41d/sdk/session";
+import { sessions, parseInvite, parseSkills, anonGet, jsonContent, clientFor } from "./helpers";
+export { parseInvite, parseSkills };
 
-// Key: `${roomId}:${participantId}` → RoomClient
-const sessions = new Map<string, RoomClient>();
 
-export function parseInvite(inviteJson: string): Invite {
-  const parsed = JSON.parse(inviteJson);
-  if (!parsed.room_url || !parsed.join_secret || !parsed.room_id || !parsed.api) {
-    throw new Error("Invalid invite JSON: must contain room_url, join_secret, room_id, and api");
-  }
-  return parsed as Invite;
-}
-
-export function parseSkills(value?: string): string[] | undefined {
-  return value ? value.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
-}
-
-async function getOrCreateSession(
-  invite: Invite,
-  participantId: string,
-  options?: { model?: string; skills?: string[] },
-): Promise<RoomClient> {
-  const key = `${invite.room_id}:${participantId}`;
-  let client = sessions.get(key);
-  if (client) return client;
-
-  try {
-    client = await joinRoom(invite, participantId, options);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!msg.includes("409") || !msg.includes("already joined")) throw err;
-    // Participant already exists — resume with a fresh local crypto session.
-    client = await resumeRoom(invite, participantId);
-    await client.announceKey();
-  }
-  sessions.set(key, client);
-  return client;
-}
-
-async function anonGet(url: string, secret: string, label: string): Promise<unknown> {
-  const response = await fetch(url, { headers: { authorization: `Bearer ${secret}` } });
-  if (!response.ok) throw new Error(`${label}: ${response.status} ${await response.text()}`);
-  return response.json();
-}
-
-function jsonContent(value: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
-}
+// ── Server setup ────────────────────────────────────────────────
 
 const server = new McpServer(
   { name: "41d.us", version: "0.1.0" },
@@ -93,7 +51,7 @@ server.registerTool(
       board: args.board ? JSON.parse(args.board) : undefined,
       boardSchema: args.boardSchema ? JSON.parse(args.boardSchema) : undefined,
     });
-    const host = await getOrCreateSession(invite, hostId);
+    const host = await getOrCreateSession(sessions, invite, hostId);
     return jsonContent({ ...invite, host_joined: true, host_key_announced: true, host_cursor: host.cursor });
   },
 );
@@ -101,17 +59,17 @@ server.registerTool(
 server.registerTool(
   "join_room",
   {
-    description: "Join a 41d.us room using an invite JSON. Generates ECDH keys, announces them, and stores the session for subsequent operations. Re-joining is idempotent (reuses cached session).",
+    description: "Join a 41d.us room using an invite JSON. Generates ECDH keys, announces them, and stores the session for subsequent operations. Re-joining is idempotent.",
     inputSchema: {
       inviteJson: z.string().describe("The full invite JSON string (from create_room or an external invite)"),
       participantId: z.string().min(1).describe("Unique participant name for this agent in the room"),
       model: z.string().optional().describe("Model name to publish on the participant record"),
-      skills: z.string().optional().describe("Comma-separated skill list to publish (e.g. 'typescript,review,docs')"),
+      skills: z.string().optional().describe("Comma-separated skill list (e.g. 'typescript,review,docs')"),
     },
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);
-    const client = await getOrCreateSession(invite, args.participantId, {
+    const client = await getOrCreateSession(sessions, invite, args.participantId, {
       model: args.model,
       skills: parseSkills(args.skills),
     });
@@ -128,7 +86,7 @@ server.registerTool(
 server.registerTool(
   "send_message",
   {
-    description: "Send an encrypted message to a 41d.us room. Bodies are automatically E2E encrypted using ECDH + AES-256-GCM. The session must already be joined via join_room.",
+    description: "Send an encrypted message to a 41d.us room. Bodies are automatically E2E encrypted. The session must already be joined via join_room.",
     inputSchema: {
       inviteJson: z.string().describe("The full invite JSON string"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
@@ -140,7 +98,7 @@ server.registerTool(
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);
-    const client = await getOrCreateSession(invite, args.participantId);
+    const client = await clientFor(invite, args.participantId);
     const to = args.to === "all" ? "all" : args.to.includes(",") ? args.to.split(",").map((s) => s.trim()) : args.to.trim();
     const result = await client.send(to, JSON.parse(args.body), {
       intent: args.intent ?? "notify",
@@ -153,7 +111,7 @@ server.registerTool(
 server.registerTool(
   "read_messages",
   {
-    description: "Read recent (unread by default) or all messages from a 41d.us room. Encrypted messages are automatically decrypted. The session must already be joined.",
+    description: "Read recent or all messages from a 41d.us room. Encrypted messages are automatically decrypted.",
     inputSchema: {
       inviteJson: z.string().describe("The full invite JSON string"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
@@ -163,7 +121,7 @@ server.registerTool(
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);
-    const client = await getOrCreateSession(invite, args.participantId);
+    const client = await clientFor(invite, args.participantId);
     const messages = await client.read({ all: args.all ?? false, includeSelf: args.includeSelf });
     return jsonContent({ cursor: client.cursor, count: messages.length, messages });
   },
@@ -196,7 +154,7 @@ server.registerTool(
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);
-    const client = await getOrCreateSession(invite, args.participantId);
+    const client = await clientFor(invite, args.participantId);
     const result = await client.updateStatus(args.state, args.status, {
       model: args.model,
       skills: parseSkills(args.skills),
@@ -208,7 +166,7 @@ server.registerTool(
 server.registerTool(
   "read_board",
   {
-    description: "Read the shared board from a 41d.us room. The board stores shared project state like tasks, Kanban columns, blockers, and decisions.",
+    description: "Read the shared board from a 41d.us room.",
     inputSchema: { inviteJson: z.string().describe("The full invite JSON string") },
   },
   async (args) => {
@@ -220,7 +178,7 @@ server.registerTool(
 server.registerTool(
   "set_board_key",
   {
-    description: "Set a single key on the shared board. Overwrites the entire value for that key.",
+    description: "Set a single key on the shared board.",
     inputSchema: {
       inviteJson: z.string().describe("The full invite JSON string"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
@@ -230,7 +188,7 @@ server.registerTool(
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);
-    const client = await getOrCreateSession(invite, args.participantId);
+    const client = await clientFor(invite, args.participantId);
     const result = await client.setBoardKey(args.key, JSON.parse(args.value));
     return jsonContent(result ?? { ok: true });
   },
@@ -239,7 +197,7 @@ server.registerTool(
 server.registerTool(
   "patch_board",
   {
-    description: "Update multiple top-level board keys at once. Merges values into the existing board.",
+    description: "Update multiple top-level board keys at once.",
     inputSchema: {
       inviteJson: z.string().describe("The full invite JSON string"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
@@ -248,7 +206,7 @@ server.registerTool(
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);
-    const client = await getOrCreateSession(invite, args.participantId);
+    const client = await clientFor(invite, args.participantId);
     const result = await client.patchBoard(JSON.parse(args.values));
     return jsonContent(result ?? { ok: true });
   },
@@ -266,7 +224,7 @@ server.registerTool(
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);
-    const client = await getOrCreateSession(invite, args.participantId);
+    const client = await clientFor(invite, args.participantId);
     const result = await client.deleteBoardKey(args.key);
     return jsonContent(result ?? { ok: true });
   },
@@ -275,7 +233,7 @@ server.registerTool(
 server.registerTool(
   "close_room",
   {
-    description: "Close and delete a 41d.us room. Only the host (creator) can close the room.",
+    description: "Close and delete a 41d.us room. Only the host can close.",
     inputSchema: {
       inviteJson: z.string().describe("The full invite JSON string"),
       participantId: z.string().min(1).describe("Your participant ID (must be the host)"),
@@ -283,11 +241,9 @@ server.registerTool(
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);
-    const client = await getOrCreateSession(invite, args.participantId);
+    const client = await clientFor(invite, args.participantId);
     await client.close();
-    for (const [key] of sessions) {
-      if (key.startsWith(`${invite.room_id}:`)) sessions.delete(key);
-    }
+    clearRoomSessions(sessions, invite.room_id);
     return jsonContent({ ok: true, room_id: invite.room_id, closed: true });
   },
 );
@@ -324,6 +280,8 @@ server.registerTool(
     return jsonContent(await anonGet(invite.api.status, invite.join_secret, "Failed to get room status"));
   },
 );
+
+// ── Entry point ─────────────────────────────────────────────────
 
 async function main() {
   const transport = new StdioServerTransport();

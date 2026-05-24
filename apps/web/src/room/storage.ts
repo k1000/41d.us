@@ -3,15 +3,6 @@ import { activeParticipants } from "./participants";
 
 const STATE_KEY = "invite";
 
-/**
- * Return a shallow copy of {@link invite} with {@link patch} fields applied,
- * satisfying the InviteState type. Every write to the DurableObject storage
- * should go through this to guarantee structural consistency.
- */
-export function patchInviteState(invite: InviteState, patch: Partial<InviteState>): InviteState {
-  return { ...invite, ...patch } satisfies InviteState;
-}
-
 export class RoomStorage {
   constructor(private readonly state: DurableObjectState) {}
 
@@ -34,10 +25,12 @@ export class RoomStorage {
     return this.state.storage.put(STATE_KEY, invite);
   }
 
-  touchParticipantLastSeen(invite: InviteState, participantId: string): Promise<void> {
-    const participants = { ...invite.participants };
-    participants[participantId] = { ...participants[participantId], last_seen_at: new Date().toISOString() };
-    return this.putInvite(patchInviteState(invite, { participants }));
+  patchAndSave(invite: InviteState, patch: Partial<InviteState>): Promise<void> {
+    return this.putInvite({ ...invite, ...patch });
+  }
+
+  scheduleCleanup(expiresAt: number): Promise<void> {
+    return this.state.storage.setAlarm(expiresAt);
   }
 
   async deleteIfEmpty(): Promise<void> {

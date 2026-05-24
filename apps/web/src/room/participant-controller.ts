@@ -1,70 +1,91 @@
 import { json } from "../format";
 import type { InviteState } from "../types";
-import { authenticate, requireHost } from "./auth";
+import { parseRequest, authenticate, authenticateParticipant } from "./auth-context";
 import { joinResponse, roomInfo } from "./info";
+import { createRoomMessage } from "./messages";
 import {
   createJoinedParticipant,
   isParticipantJoined,
   parseParticipantProfile,
-  requireParticipantId,
   validateParticipantCanJoin,
   withKickedParticipant,
   withLeftParticipant,
   withUpdatedParticipant,
 } from "./participants";
+import { normalizeParticipantId } from "../validation";
+import type { RoomEventBus } from "./events";
 import type { RoomStorage } from "./storage";
 
 export class RoomParticipantController {
-  constructor(private readonly storage: RoomStorage) {}
+  constructor(
+    private readonly storage: RoomStorage,
+    private readonly events: RoomEventBus,
+  ) {}
 
   async join(request: Request, invite: InviteState, pathParticipantId: string): Promise<Response> {
-    const body = await authenticate(request, invite);
-    if (body instanceof Response) return body;
-    const participantId = requireParticipantId(pathParticipantId);
+    const parsed = await parseRequest(request);
+    const err = await authenticate(invite, parsed);
+    if (err) return err;
+
+    const participantId = normalizeParticipantId(pathParticipantId);
     if (participantId instanceof Response) return participantId;
 
     const participants = { ...invite.participants };
     const joinValidation = validateParticipantCanJoin(participants, participantId, invite.maxParticipants);
     if (joinValidation) return joinValidation;
-    const profile = parseParticipantProfile(body);
+    const profile = parseParticipantProfile(parsed.body);
     if (profile instanceof Response) return profile;
     participants[participantId] = createJoinedParticipant(participantId, profile);
     const updated = { ...invite, phase: "ready", participants } satisfies InviteState;
-    await this.storage.putInvite(updated);
+    const seq = updated.nextSeq + 1;
+    const systemMessage = createRoomMessage(
+      {
+        body: {
+          participant_id: participantId,
+          room_id: updated.roomId,
+          host_id: updated.hostId,
+          next: "Announce your encryption key (key.exchange), sync (read) to learn peer keys, then send encrypted messages.",
+        },
+        intent: "participant.joined",
+      },
+      "system",
+      "all",
+      seq,
+    );
+    const messages = [...updated.messages, systemMessage];
+    await this.storage.patchAndSave(updated, { nextSeq: seq, messages });
+    this.events.notifyMessage(systemMessage, seq);
     return json(joinResponse(updated, participantId, invite.nextSeq));
   }
 
   async update(request: Request, invite: InviteState, participantIdFromPath: string): Promise<Response> {
-    const body = await authenticate(request, invite);
-    if (body instanceof Response) return body;
-    const participantId = requireParticipantId(participantIdFromPath);
+    const parsed = await parseRequest(request);
+    const auth = await authenticateParticipant(invite, parsed, participantIdFromPath);
+    if (auth instanceof Response) return auth;
+    const participantId = normalizeParticipantId(participantIdFromPath);
     if (participantId instanceof Response) return participantId;
-    const actorId = this.resolveActorId(request, participantId);
-    if (actorId instanceof Response) return actorId;
-    if (actorId !== participantId && actorId !== invite.hostId) return json({ error: "only participant or host can update participant status" }, 403);
-    if (!isParticipantJoined(invite.participants, participantId)) return json({ error: "participant has not joined" }, 403);
-
-    const profile = parseParticipantProfile(body);
+    if (auth.participantId !== participantId && auth.participantId !== invite.hostId) {
+      return json({ error: "only participant or host can update participant status" }, 403);
+    }
+    if (!isParticipantJoined(invite.participants, participantId)) {
+      return json({ error: "participant has not joined" }, 403);
+    }
+    const profile = parseParticipantProfile(parsed.body);
     if (profile instanceof Response) return profile;
-
     const updated = withUpdatedParticipant(invite, participantId, profile);
     await this.storage.putInvite(updated);
     return json({ ok: true, participant: updated.participants[participantId] });
   }
 
   async delete(request: Request, invite: InviteState, targetIdFromPath: string): Promise<Response> {
-    const body = await authenticate(request, invite);
-    if (body instanceof Response) return body;
-    const targetId = requireParticipantId(targetIdFromPath);
+    const parsed = await parseRequest(request);
+    const auth = await authenticateParticipant(invite, parsed, targetIdFromPath);
+    if (auth instanceof Response) return auth;
+    const targetId = normalizeParticipantId(targetIdFromPath);
     if (targetId instanceof Response) return targetId;
-    const actorId = this.resolveActorId(request, targetId);
-    if (actorId instanceof Response) return actorId;
+    const actorId = auth.participantId;
     if (actorId === targetId) return this.leave(invite, targetId);
-    return this.kick(request, invite, targetId);
-  }
-
-  private resolveActorId(request: Request, fallback: string): string | Response {
-    return requireParticipantId(request.headers.get("x-participant-id") ?? fallback);
+    return this.kick(invite, actorId, targetId);
   }
 
   private async leave(invite: InviteState, participantId: string): Promise<Response> {
@@ -73,9 +94,8 @@ export class RoomParticipantController {
     return json({ ok: true });
   }
 
-  private async kick(request: Request, invite: InviteState, targetId: string): Promise<Response> {
-    const hostCheck = await requireHost(request, invite, "kick participants");
-    if (hostCheck instanceof Response) return hostCheck;
+  private async kick(invite: InviteState, actorId: string, targetId: string): Promise<Response> {
+    if (actorId !== invite.hostId) return json({ error: "only host can kick participants" }, 403);
     const updated = withKickedParticipant(invite, targetId);
     if (updated instanceof Response) return updated;
     await this.storage.putInvite(updated);

@@ -1,31 +1,34 @@
 import { json, respondNegotiated } from "./format";
 import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
 import { DEFAULT_EXTEND_MS, MAX_INVITE_TTL_MS, MIN_INVITE_TTL_MS } from "./constants";
-import { authenticateParticipant, requireHost, withAuth } from "./room/auth";
+import { parseRequest, authenticate, authenticateParticipant } from "./room/auth-context";
+import { isParticipantJoined } from "./room/participants";
 import { RoomBoardController } from "./room/board-controller";
 import { RoomEvents } from "./room/events";
+import type { RoomEventBus } from "./room/events";
 import { roomExport, roomInfo, roomStatus } from "./room/info";
 import { RoomInitController } from "./room/init-controller";
 import { RoomMessageController } from "./room/message-controller";
-import { createRoomMessage } from "./room/messages";
-import { activeParticipants, isParticipantJoined } from "./room/participants";
+import { activeParticipants } from "./room/participants";
 import { RoomParticipantController } from "./room/participant-controller";
 import { routeRoomRequest } from "./room/router";
-import { patchInviteState, RoomStorage } from "./room/storage";
+import { RoomStorage } from "./room/storage";
 import type { Env, InviteState } from "./types";
 
-export class RendezvousSession {
-  private readonly events = new RoomEvents();
+export class RendezvousSession implements DurableObject {
+  private readonly events: RoomEventBus = new RoomEvents();
   private readonly storage: RoomStorage;
   private readonly board: RoomBoardController;
   private readonly participants: RoomParticipantController;
   private readonly messages: RoomMessageController;
   private readonly init: RoomInitController;
+  private readonly ctx: DurableObjectState;
 
   constructor(state: DurableObjectState, _env: Env) {
+    this.ctx = state;
     this.storage = new RoomStorage(state);
     this.board = new RoomBoardController(this.storage, this.events);
-    this.participants = new RoomParticipantController(this.storage);
+    this.participants = new RoomParticipantController(this.storage, this.events);
     this.messages = new RoomMessageController(this.storage, this.events);
     this.init = new RoomInitController(this.storage);
   }
@@ -56,15 +59,19 @@ export class RendezvousSession {
     );
   }
 
+  async alarm(): Promise<void> {
+    const invite = await this.storage.getInvite();
+    if (!invite) return;
+    if (Date.now() > invite.expiresAt || activeParticipants(invite.participants).length === 0) {
+      await this.ctx.storage.deleteAll();
+    }
+  }
+
   private routeRequest(
     request: Request,
     url: URL,
     invite: InviteState,
   ): Promise<Response> | undefined {
-    if (request.method === "POST" && url.pathname.endsWith("/extend")) {
-      return this.handleExtendTtl(request, invite);
-    }
-
     return routeRoomRequest(request, url, invite, {
       read: () => this.messages.read(request, invite),
       send: () => this.messages.send(request, invite),
@@ -76,7 +83,7 @@ export class RendezvousSession {
       setBoardKey: (key) => this.board.setKey(request, invite, key),
       deleteBoardKey: (key) => this.board.deleteKey(request, invite, key),
       join: (participantId) =>
-        this.handleJoin(request, invite, participantId),
+        this.participants.join(request, invite, participantId),
       updateParticipant: (participantId) =>
         this.participants.update(request, invite, participantId),
       deleteParticipant: (participantId) =>
@@ -84,62 +91,33 @@ export class RendezvousSession {
       participants: () => this.handleParticipants(request, invite),
       status: () => this.handleStatus(request, invite),
       events: () => this.handleEvents(request, invite),
+      extend: () => this.handleExtendTtl(request, invite),
     });
-  }
-
-  private async handleJoin(
-    request: Request,
-    invite: InviteState,
-    participantId: string,
-  ): Promise<Response> {
-    const response = await this.participants.join(request, invite, participantId);
-    if (response.status !== 200) return response;
-    const updated = await this.storage.getInvite();
-    if (!updated) return response;
-    const seq = updated.nextSeq + 1;
-    const message = createRoomMessage(
-      {
-        body: {
-          participant_id: participantId,
-          room_id: updated.roomId,
-          host_id: updated.hostId,
-          next: "Announce your encryption key (key.exchange), sync (read) to learn peer keys, then send encrypted messages.",
-        },
-        intent: "participant.joined",
-      },
-      "system",
-      "all",
-      seq,
-    );
-    const messages = [...updated.messages, message];
-    await this.storage.putInvite(patchInviteState(updated, { nextSeq: seq, messages }));
-    this.events.notifyMessage(message, seq);
-    return response;
   }
 
   private async handleExtendTtl(
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    const auth = await authenticateParticipant(request, invite);
+    const parsed = await parseRequest(request);
+    const auth = await authenticateParticipant(invite, parsed);
     if (auth instanceof Response) return auth;
     if (auth.participantId !== invite.hostId) return json({ error: "only host can extend TTL" }, 403);
 
-    const rawExtend = (auth.body as { extend_ms?: unknown }).extend_ms;
+    const rawExtend = auth.body.extend_ms as number | undefined;
     const requested = typeof rawExtend === "number" && Number.isFinite(rawExtend)
       ? Math.trunc(rawExtend)
       : DEFAULT_EXTEND_MS;
     const maxExtend = Date.now() + MAX_INVITE_TTL_MS - invite.expiresAt;
     const extendMs = Math.min(Math.max(requested, MIN_INVITE_TTL_MS), Math.max(maxExtend, MIN_INVITE_TTL_MS));
 
-    const updated = patchInviteState(invite, {
-      expiresAt: invite.expiresAt + extendMs,
-    });
-    await this.storage.putInvite(updated);
+    const newExpiresAt = invite.expiresAt + extendMs;
+    await this.storage.patchAndSave(invite, { expiresAt: newExpiresAt });
+    await this.storage.scheduleCleanup(newExpiresAt);
     return json({
       ok: true,
       extended_ms: extendMs,
-      expires_at: new Date(updated.expiresAt).toISOString(),
+      expires_at: new Date(newExpiresAt).toISOString(),
     });
   }
 
@@ -148,47 +126,51 @@ export class RendezvousSession {
     invite: InviteState,
   ): Promise<Response> {
     const url = new URL(request.url);
-    const auth = await authenticateParticipant(request, invite);
+    const parsed = await parseRequest(request);
+    const auth = await authenticateParticipant(invite, parsed);
     if (auth instanceof Response) return auth;
-    const participantId = auth.participantId;
-    if (!isParticipantJoined(invite.participants, participantId)) {
+    if (!isParticipantJoined(invite.participants, auth.participantId)) {
       return json({ error: "participant has not joined" }, 403);
     }
     const includeSelf = url.searchParams.get("include_self") === "true";
-    return this.events.subscribe(participantId, includeSelf, invite.nextSeq);
+    return this.events.subscribe(auth.participantId, includeSelf, invite.nextSeq);
   }
 
   private async handleParticipants(
-    _request: Request,
+    request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    return withAuth(_request, invite, async () =>
-      json({
-        room: roomInfo(invite),
-        participants: activeParticipants(invite.participants),
-      }),
-    );
+    const parsed = await parseRequest(request);
+    const err = await authenticate(invite, parsed);
+    if (err) return err;
+    return json({
+      room: roomInfo(invite),
+      participants: activeParticipants(invite.participants),
+    });
   }
 
   private async handleStatus(
-    _request: Request,
+    request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    return withAuth(_request, invite, async () =>
-      json({
-        ...roomStatus(invite),
-        closed: invite.phase === "closed",
-      }),
-    );
+    const parsed = await parseRequest(request);
+    const err = await authenticate(invite, parsed);
+    if (err) return err;
+    return json({
+      ...roomStatus(invite),
+      closed: invite.phase === "closed",
+    });
   }
 
   private async handleClose(
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    const hostCheck = await requireHost(request, invite, "close room");
-    if (hostCheck instanceof Response) return hostCheck;
-    await this.storage.putInvite(patchInviteState(invite, { phase: "closed" }));
+    const parsed = await parseRequest(request);
+    const auth = await authenticateParticipant(invite, parsed);
+    if (auth instanceof Response) return auth;
+    if (auth.participantId !== invite.hostId) return json({ error: "only host can close room" }, 403);
+    await this.storage.patchAndSave(invite, { phase: "closed" });
     return json({ ok: true, closed: true });
   }
 
@@ -196,8 +178,10 @@ export class RendezvousSession {
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    const hostCheck = await requireHost(request, invite, "export room");
-    if (hostCheck instanceof Response) return hostCheck;
+    const parsed = await parseRequest(request);
+    const auth = await authenticateParticipant(invite, parsed);
+    if (auth instanceof Response) return auth;
+    if (auth.participantId !== invite.hostId) return json({ error: "only host can export room" }, 403);
     return json(roomExport(invite));
   }
 }

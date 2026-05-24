@@ -13,6 +13,7 @@ export class RoomInitController {
     const initState = this.buildState(body, existing);
     if (initState instanceof Response) return initState;
     await this.storage.putInvite(initState);
+    await this.storage.scheduleCleanup(body.expiresAt);
     return json({ ok: true });
   }
 

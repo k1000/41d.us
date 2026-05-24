@@ -1,31 +1,9 @@
-import type { RoomMessage } from "@41d/sdk/types";
-export type { Recipient, RoomMessage } from "@41d/sdk/types";
+import type { BoardEntry, Participant, RoomMessage, SessionPhase } from "@41d/sdk/types";
+export type { BoardEntry, Participant, RoomMessage, SessionPhase } from "@41d/sdk/types";
+export type { Recipient } from "@41d/sdk/types";
 
 export interface Env {
   RENDEZVOUS: DurableObjectNamespace;
-}
-
-type SessionPhase = "waiting" | "ready" | "closed";
-
-type ParticipantState = "free" | "busy";
-
-export interface Participant {
-  id: string;
-  joined_at: string;
-  last_seen_at: string;
-  last_read_seq: number;
-  state: ParticipantState;
-  status: string;
-  status_updated_at: string;
-  model?: string;
-  skills?: string[];
-  left_at?: string;
-}
-
-export interface BoardEntry {
-  value: unknown;
-  updated_by: string;
-  updated_at: string;
 }
 
 /** Payload sent to the DO's __init endpoint. Transient fields are consumed during init and never stored. */

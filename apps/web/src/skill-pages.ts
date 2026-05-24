@@ -1,4 +1,4 @@
-import { renderMarkdownPage } from "./format";
+import { renderMarkdownPage } from "./format-markdown";
 import { skillExampleMarkdown, skillMarkdown, skillExampleTitle } from "@41d/skill";
 
 export function skillExamplePage(slug: string): string | undefined {
