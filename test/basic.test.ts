@@ -29,7 +29,7 @@ describe("homePage", () => {
 
     expect(html).toContain("cross-project collaboration for heterogeneous AI agents.");
     expect(html).toContain('href="/security"');
-    expect(html).toContain("End-to-end encryption via client-side ECDH + AES-256-GCM.");
+    expect(html).toContain('href="/security">End-to-end encryption via client-side ECDH + AES-256-GCM.</a>');
     expect(html).toContain("agents from different projects, technologies, and skill sets");
     expect(html).toContain("replaces insecure ad-hoc coordination");
     expect(html).toContain("If you were invited");
@@ -37,6 +37,17 @@ describe("homePage", () => {
     expect(html).toContain('href="https://www.anthropic.com/claude-code" target="_blank"');
     expect(html).toContain('href="https://openai.com/codex/" target="_blank"');
     expect(html).toContain("https://github.com/k1000/41d.us");
+    expect(html).toContain('<h2><span class="md-marker">##</span> For agents</h2>');
+    expect(html).toContain(".md-marker");
+    expect(html).toContain("--highlight: #fff1d7");
+    expect(html).toContain('ul > li::marker { content: "* "; }');
+    expect(html).not.toContain('h2::before { content: "## ";');
+    expect(html).toContain("<header><hgroup><h1>41d.us</h1>");
+    expect(html).toContain("<main>");
+    expect(html).toContain("<article>");
+    expect(html).toContain("<footer>");
+    expect(html).not.toContain('class="tagline"');
+    expect(html).not.toContain('class="hero-title"');
     expect(html).toContain("<meta name=\"description\"");
     expect(html).toContain("<meta property=\"og:title\"");
     expect(html).toContain("<meta name=\"twitter:card\" content=\"summary\"");
@@ -53,15 +64,11 @@ describe("homePage", () => {
 
     expect(markdown).toContain("# 41d.us");
     expect(markdown).toContain("Secure cross-project collaboration for heterogeneous AI agents.");
-    expect(markdown).toContain("[security model](/security)");
-    expect(markdown).toContain("End-to-end encryption via client-side ECDH + AES-256-GCM.");
+    expect(markdown).toContain("[End-to-end encryption via client-side ECDH + AES-256-GCM.](/security)");
     expect(markdown).toContain("agents from different projects, technologies, and skill sets");
     expect(markdown).toContain("replaces insecure ad-hoc coordination");
     expect(markdown).toContain("Curl examples are useful for testing, but production agents should use encrypted payloads.");
     expect(markdown).toContain("Open source repository: https://github.com/k1000/41d.us");
-    expect(markdown).toContain("Share on X: https://twitter.com/intent/tweet");
-    expect(markdown).toContain("Share on LinkedIn: https://www.linkedin.com/sharing/share-offsite/");
-    expect(markdown).toContain("Share on Hacker News: https://news.ycombinator.com/submitlink");
     expect(markdown).not.toContain("https://41d.us/client/agent.py");
   });
 
@@ -176,6 +183,31 @@ describe("invite creation", () => {
 });
 
 describe("SDK HTTP client", () => {
+  const makeInvite = (): Invite => ({
+    intro: "intro",
+    next_step: "join",
+    invite_id: "invite",
+    room: { name: "room", host_id: "host", max_participants: 2 },
+    join_secret: "secret",
+    room_url: "https://41d.us/r/invite",
+    api: {
+      join: "https://41d.us/r/invite/participants/{participant_id}",
+      send: "https://41d.us/r/invite",
+      read: "https://41d.us/r/invite",
+      read_all: "https://41d.us/r/invite/?view=all",
+      events: "https://41d.us/r/invite/events",
+      board: "https://41d.us/r/invite/board",
+      participants: "https://41d.us/r/invite/participants",
+      status: "https://41d.us/r/invite/status",
+      leave: "https://41d.us/r/invite/participants/{participant_id}",
+      kick: "https://41d.us/r/invite/participants/{target_id}",
+      close: "https://41d.us/r/invite",
+      export: "https://41d.us/r/invite/export",
+    },
+    skill: "https://41d.us/skill/SKILL.md",
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+  });
+
   it("creates invites with normalized request keys", async () => {
     const originalFetch = globalThis.fetch;
     let requestBody: unknown;
@@ -204,30 +236,7 @@ describe("SDK HTTP client", () => {
   });
 
   it("sends falsy JSON bodies", async () => {
-    const invite: Invite = {
-      intro: "intro",
-      next_step: "join",
-      invite_id: "invite",
-      room: { name: "room", host_id: "host", max_participants: 2 },
-      join_secret: "secret",
-      room_url: "https://41d.us/r/invite",
-      api: {
-        join: "https://41d.us/r/invite/participants/{participant_id}",
-        send: "https://41d.us/r/invite",
-        read: "https://41d.us/r/invite",
-        read_all: "https://41d.us/r/invite?view=all",
-        events: "https://41d.us/r/invite/events",
-        board: "https://41d.us/r/invite/board",
-        participants: "https://41d.us/r/invite/participants",
-        status: "https://41d.us/r/invite/status",
-        leave: "https://41d.us/r/invite/participants/{participant_id}",
-        kick: "https://41d.us/r/invite/participants/{target_id}",
-        close: "https://41d.us/r/invite",
-        export: "https://41d.us/r/invite/export",
-      },
-      skill: "https://41d.us/skill/SKILL.md",
-      expires_at: new Date(Date.now() + 60_000).toISOString(),
-    };
+    const invite = makeInvite();
     const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -246,6 +255,30 @@ describe("SDK HTTP client", () => {
 
     expect(requests[1].init?.headers).toMatchObject({ "content-type": "application/json" });
     expect(requests[1].init?.body).toBe("false");
+  });
+
+  it("appends trailing slash before view=all when reading retained history", async () => {
+    const invite = makeInvite();
+    const originalFetch = globalThis.fetch;
+    const requests: string[] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      requests.push(String(url));
+      return new Response(JSON.stringify({ cursor: 0, messages: [] }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const room = await joinRoom(invite, "agent-a");
+      requests.length = 0;
+      await room.read({ all: true });
+      await room.read();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requests[0]).toBe("https://41d.us/r/invite/?view=all");
+    expect(requests[1]).toBe("https://41d.us/r/invite");
   });
 });
 
