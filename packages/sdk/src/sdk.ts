@@ -112,14 +112,22 @@ export async function createInvite(baseUrl = "https://41d.us", options: CreateIn
 
 export async function joinRoom(invite: Invite, participantId: string, options: { model?: string; skills?: string[] } = {}): Promise<RoomClient> {
   const join = await request<{ ok: true; cursor: number }>(`${invite.room_url}/participants/${encodeURIComponent(participantId)}`, invite, { method: "PUT", body: Object.keys(options).length ? options : undefined });
-  let cursor = join.cursor;
+  return buildRoomClient(invite, participantId, join.cursor);
+}
 
+/** Build a RoomClient for a participant already registered on the server (e.g. session restart). */
+export async function resumeRoom(invite: Invite, participantId: string): Promise<RoomClient> {
+  return buildRoomClient(invite, participantId, 0);
+}
+
+async function buildRoomClient(invite: Invite, participantId: string, initialCursor: number): Promise<RoomClient> {
+  let cursor = initialCursor;
   const cryptoSession = await createSdkCryptoSession(participantId);
 
   return {
     invite,
     participantId,
-    cursor,
+    get cursor() { return cursor; },
 
     async announceKey() {
       const publicKeyBody = await cryptoSession.announceKeyBody();
@@ -158,10 +166,8 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
       const result = await request<{ cursor: number; messages: RoomMessage[] }>(url.toString(), invite, { participantId });
       cursor = result.cursor;
 
-      // Process any key exchange messages to learn peer public keys
       await cryptoSession.processKeyExchange(result.messages);
 
-      // Decrypt encrypted messages
       return Promise.all(result.messages.map(async (msg) => ({
         ...msg,
         body: await cryptoSession.decryptMessageBody(msg),

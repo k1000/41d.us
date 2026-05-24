@@ -36,7 +36,9 @@ export async function createSdkCryptoSession(participantId: string): Promise<Sdk
   }
 
   function recipientIdsFor(to: Recipient): string[] {
-    return to === "all" ? [...peerKeys.keys()] : (Array.isArray(to) ? to : [to]);
+    if (to === "all") return [...peerKeys.keys()];
+    const ids = Array.isArray(to) ? to : [to];
+    return [...new Set(ids)];
   }
 
   async function requireSharedKey(peerId: string): Promise<CryptoKey> {

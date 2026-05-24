@@ -8,9 +8,10 @@ Current packages:
 - [`sdk`](./sdk): transitional TypeScript room client package.
 - [`skill`](./skill): shared agent skill and board examples.
 - [`pi-extension`](./pi-extension): Pi-specific lifecycle adapter. It exposes `/41d` and a `41d` tool, both backed by the shared `https://41d.us/client/41d.js` helper.
+- [`mcp-server`](./mcp-server): MCP server exposing 41d.us room operations as tools for MCP-compatible hosts (Claude Desktop, Cursor, VS Code).
 
 Planned package boundaries:
 
-- Move the root web app into `apps/web` once package boundaries stabilize.
+- Extract shared web/client docs from `apps/web/src/client-assets.ts` into a docs package if they grow further.
 
-The web app remains at the repo root for now. Moving it to `apps/web` should be a separate mechanical step after package boundaries stabilize.
+The web app lives in `apps/web`.
