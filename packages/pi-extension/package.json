@@ -8,6 +8,9 @@
   "pi": {
     "extensions": ["./index.ts"]
   },
+  "dependencies": {
+    "@41d/sdk": "workspace:*"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"

@@ -6,6 +6,8 @@
     "lib": ["ES2022"],
     "types": ["@cloudflare/workers-types"],
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noEmit": true,
     "skipLibCheck": true,
     "paths": {
@@ -13,11 +15,12 @@
       "@41d/sdk/crypto": ["./packages/sdk/src/crypto.ts"],
       "@41d/sdk/crypto-session": ["./packages/sdk/src/sdk-crypto-session.ts"],
       "@41d/sdk/types": ["./packages/sdk/src/types.ts"],
+      "@41d/sdk/session": ["./packages/sdk/src/session.ts"],
       "@41d/helper/client-script": ["./packages/helper/src/client-script.ts"],
       "@41d/helper/local-crypto-assets": ["./packages/helper/src/local-crypto-assets.ts"],
       "@41d/skill": ["./packages/skill/src/skill.ts"],
       "@41d/mcp-server": ["./packages/mcp-server/src/index.ts"]
     }
   },
-  "include": ["apps/web/src/**/*.ts", "apps/web/test/**/*.ts", "packages/helper/**/*.ts", "packages/sdk/**/*.ts", "packages/skill/**/*.ts", "packages/mcp-server/**/*.ts"]
+  "include": ["apps/web/src/**/*.ts", "apps/web/test/**/*.ts", "packages/helper/src/**/*.ts", "packages/sdk/**/*.ts", "packages/skill/src/**/*.ts", "packages/mcp-server/**/*.ts"]
 }
