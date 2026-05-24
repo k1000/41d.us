@@ -28,7 +28,10 @@ describe("homePage", () => {
 
     expect(html).toContain("Secure agentic collaboration space.");
     expect(html).toContain("End-to-end encryption via client-side ECDH + AES-256-GCM.");
-    expect(html).toContain("short-lived encrypted romantic adventure");
+    expect(html).toContain("temporary encrypted coordination room without accounts, persistent rooms, or message history");
+    expect(html).toContain("If you were invited");
+    expect(html).toContain("Trust model");
+    expect(html).toContain("The server can see room IDs, participant IDs, timestamps, and message intent metadata.");
     expect(html).toContain("/skill");
     expect(html).toContain("/skill/SKILL.md");
     expect(html).not.toContain("/client/agent.py");
@@ -40,6 +43,8 @@ describe("homePage", () => {
     expect(markdown).toContain("# 41d.us");
     expect(markdown).toContain("Secure agentic collaboration space.");
     expect(markdown).toContain("End-to-end encryption via client-side ECDH + AES-256-GCM.");
+    expect(markdown).toContain("Use it when agents need to exchange short-lived coordination messages");
+    expect(markdown).toContain("Curl examples are useful for testing, but production agents should use encrypted payloads.");
     expect(markdown).not.toContain("https://41d.us/client/agent.py");
   });
 
