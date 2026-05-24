@@ -1,4 +1,4 @@
-import { marked } from "marked";
+import { marked, Renderer } from "marked";
 
 const ESCAPE_MAP: Record<string, string> = {
   "&": "&amp;",
@@ -148,26 +148,37 @@ export function respondNegotiated(
   });
 }
 
-export function addLiteralMarkdownH2Markers(html: string): string {
-  return html.replace(/<h2(\s[^>]*)?>(?!##\s)/g, (_, attrs) => `<h2${attrs ?? ""}><span class="md-marker">##</span> `);
-}
+const markdownRenderer = new Renderer();
 
-export function addLiteralMarkdownListMarkers(html: string): string {
-  return html.replace(/<ul>([\s\S]*?)<\/ul>/g, (block) =>
-    block
-      .replace("<ul>", '<ul class="md-list">')
-      .replace(/<li>(?!<span class="md-bullet")/g, '<li><span class="md-bullet" aria-hidden="true">*</span><span>')
-      .replace(/<\/li>/g, "</span></li>"),
-  );
-}
+const origHeading = markdownRenderer.heading.bind(markdownRenderer);
+markdownRenderer.heading = function (token) {
+  if (token.depth === 2) {
+    return `<h2><span class="md-marker">##</span> ${this.parser.parseInline(token.tokens)}</h2>\n`;
+  }
+  return origHeading(token);
+};
 
-export function addLiteralMarkdownMarkers(html: string): string {
-  return addLiteralMarkdownListMarkers(addLiteralMarkdownH2Markers(html));
+const origList = markdownRenderer.list.bind(markdownRenderer);
+markdownRenderer.list = function (token) {
+  if (token.ordered) return origList(token);
+  const items = token.items.map((item) => this.listitem(item)).join("");
+  return `<ul class="md-list">\n${items}</ul>\n`;
+};
+
+markdownRenderer.listitem = function (token) {
+  const raw = this.parser.parse(token.tokens);
+  // Strip <p> tags that parse adds for block-level rendering
+  const content = raw.replace(/<\/?p>\n?/g, "");
+  return `<li><span class="md-bullet" aria-hidden="true">*</span><span>${content}</span></li>\n`;
+};
+
+/** Parse markdown through the custom renderer that injects literal `##` and `*` markers. */
+export function renderMarkdown(markdown: string): string {
+  return marked.parse(markdown, { renderer: markdownRenderer }) as string;
 }
 
 export function renderMarkdownPage(title: string, markdown: string, extraHtml?: string): string {
-  const rendered = addLiteralMarkdownMarkers(marked.parse(markdown) as string);
-  return renderPage(title, (extraHtml ? `${extraHtml}\n` : "") + rendered);
+  return renderPage(title, (extraHtml ? `${extraHtml}\n` : "") + renderMarkdown(markdown));
 }
 
 export function json(body: unknown, status = 200): Response {

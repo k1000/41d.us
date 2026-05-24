@@ -6,8 +6,8 @@ export function randomBase64Url(byteLength: number): string {
   return base64Url(bytes);
 }
 
-export async function hashJoinSecret(inviteId: string, secret: string): Promise<string> {
-  const input = new TextEncoder().encode(`${inviteId}.${secret}`);
+export async function hashJoinSecret(roomId: string, secret: string): Promise<string> {
+  const input = new TextEncoder().encode(`${roomId}.${secret}`);
   const digest = await crypto.subtle.digest("SHA-256", input);
   return base64Url(new Uint8Array(digest));
 }
@@ -25,7 +25,9 @@ export interface EncryptedBody {
 }
 
 export function isEncryptedBody(body: unknown): body is EncryptedBody {
-  return typeof body === "object" && body !== null && (body as Record<string, unknown>).encrypted === true;
+  if (typeof body !== "object" || body === null) return false;
+  const record = body as Record<string, unknown>;
+  return record.encrypted === true && typeof record.ciphertext === "string" && typeof record.iv === "string";
 }
 
 export async function generateECDHKeyPair(): Promise<CryptoKeyPair> {

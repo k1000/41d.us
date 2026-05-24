@@ -1,5 +1,4 @@
 import type { InviteState } from "../types";
-import { boardKeyFromUrl, isRoomRoot, pathLastSegment } from "./routing";
 
 interface RoomRouteHandlers {
   read(): Promise<Response>;
@@ -27,8 +26,20 @@ export function routeRoomRequest(request: Request, url: URL, invite: InviteState
     ?? routeMeta(request, url, handlers);
 }
 
+function isRoomRoot(url: URL, roomId: string): boolean {
+  return url.pathname.replace(/\/$/, "") === `/r/${roomId}`;
+}
+
+function pathLastSegment(url: URL): string {
+  return decodeURIComponent(url.pathname.split("/").filter(Boolean).at(-1) ?? "");
+}
+
+function boardKeyFromUrl(url: URL): string | undefined {
+  return url.pathname.match(/\/board\/[^/]+$/) ? pathLastSegment(url) : undefined;
+}
+
 function routeRoot(request: Request, url: URL, invite: InviteState, handlers: RoomRouteHandlers): Promise<Response> | undefined {
-  if (!isRoomRoot(url, invite.inviteId)) return undefined;
+  if (!isRoomRoot(url, invite.roomId)) return undefined;
   if (request.method === "GET" && request.headers.has("authorization")) return handlers.read();
   if (request.method === "POST") return handlers.send();
   if (request.method === "DELETE") return handlers.close();

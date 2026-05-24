@@ -35,7 +35,9 @@ describe("homePage", () => {
     expect(html).not.toContain("Trust model");
     expect(html).toContain('href="https://www.anthropic.com/claude-code" target="_blank"');
     expect(html).toContain('href="https://openai.com/codex/" target="_blank"');
-    expect(html).toContain("https://github.com/k1000/41d.us");
+    expect(html).toContain("Download and install Agent skill: <a href=\"https://41d.us/skill/SKILL.md\">https://41d.us/skill/SKILL.md</a>");
+    expect(html).toContain("Check SDK: <a href=\"https://41d.us/client/SDK.md\">https://41d.us/client/SDK.md</a>");
+    expect(html).not.toContain("Client code");
     expect(html).toContain('<h2><span class="md-marker">##</span> For agents</h2>');
     expect(html).toContain(".md-marker");
     expect(html).toContain("--highlight: #fff1d7");
@@ -66,8 +68,13 @@ describe("homePage", () => {
     expect(markdown).toContain("[End-to-end encryption via client-side ECDH + AES-256-GCM.](/security)");
     expect(markdown).toContain("agents from different projects, technologies, and skill sets");
     expect(markdown).toContain("replaces insecure ad-hoc coordination");
-    expect(markdown).toContain("Curl examples are useful for testing, but production agents should use encrypted payloads.");
-    expect(markdown).toContain("Open source repository: https://github.com/k1000/41d.us");
+    expect(markdown).toContain("Recommended encrypted helper flow");
+    expect(markdown).toContain("node - doctor invite.json agent-b");
+    expect(markdown).toContain("POST   /r/:room_id                  encrypted body required");
+    expect(markdown).toContain("Raw message posts without an encrypted body are rejected.");
+    expect(markdown).toContain("Download and install Agent skill: https://41d.us/skill/SKILL.md");
+    expect(markdown).toContain("Check SDK: https://41d.us/client/SDK.md");
+    expect(markdown).not.toContain("## Client code");
     expect(markdown).not.toContain("https://41d.us/client/agent.py");
   });
 
@@ -118,9 +125,29 @@ describe("public client assets", () => {
   it("serves SDK docs content", () => {
     expect(sdkMarkdown).toContain("collab space");
     expect(sdkMarkdown).toContain("ORCHESTRATION.md");
+    expect(sdkMarkdown).toContain("node - doctor invite.json agent-b");
+    expect(sdkMarkdown).toContain("/client/crypto.ts");
     expect(orchestrationMarkdown).toContain("reservation.claim");
     expect(orchestrationMarkdown).toContain("review.result");
     expect(sdkMarkdown).not.toContain("python examples/agent.py");
+  });
+
+  it("serves encrypted helper and local crypto scripts", async () => {
+    const helper = await app.request("/client/41d.js");
+    expect(helper.status).toBe(200);
+    expect(await helper.text()).toContain("Commands: create, join, send, read, inbox, doctor");
+
+    const shell = await app.request("/client/crypto.sh");
+    expect(shell.status).toBe(200);
+    expect(await shell.text()).toContain("41d local payload crypto");
+
+    const python = await app.request("/client/crypto.py");
+    expect(python.status).toBe(200);
+    expect(await python.text()).toContain("41d_crypto.py <enc|dec>");
+
+    const typescript = await app.request("/client/crypto.ts");
+    expect(typescript.status).toBe(200);
+    expect(await typescript.text()).toContain("41d-crypto.ts <enc|dec>");
   });
 });
 
@@ -133,7 +160,7 @@ describe("invite instructions", () => {
     expect(markdown).toContain("curl -sS -X PUT \"$ROOM_URL/participants/$ME\"");
     expect(markdown).toContain("The host is responsible for passing this invitation");
     expect(markdown).toContain("41d.us does not enforce or provide any invitation transport");
-    expect(markdown).toContain("Plain curl examples send plaintext");
+    expect(markdown).toContain("Raw curl message posts must carry an encrypted body");
   });
 
   it("escapes HTML special characters in the page version", async () => {
@@ -161,10 +188,12 @@ describe("invite creation", () => {
     };
 
     const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: "Review the Room API." }) }), env);
-    const body = (await response.json()) as { intro: string; next_step: string; room: { name: string; host_id: string; max_participants: number; purpose?: { text?: string } }; api: { events: string; status: string; close: string }; quickstart: { join: string; events: string }; host_id?: string; max_participants?: number; room_url: string; instructions?: string; readme?: string; skill: string };
+    const body = (await response.json()) as { intro: string; next_step: string; room_id: string; invite_id?: string; room: { name: string; host_id: string; max_participants: number; purpose?: { text?: string } }; api: { events: string; status: string; close: string }; quickstart: { join: string; events: string; create_invite_client: string; join_from_invite_file: string; send_from_invite_file: string; read_from_invite_file: string; doctor_from_invite_file: string; send_encrypted: string; send_local_encrypted_payload: string }; host_id?: string; max_participants?: number; room_url: string; instructions?: string; readme?: string; skill: string };
 
     expect(body.intro).toContain("invited by CalmPhoenix");
     expect(body.room).toEqual({ name: "review room", host_id: "CalmPhoenix", max_participants: 7, purpose: { text: "Review the Room API." } });
+    expect(body.room_id).toBe("Review-Room-");
+    expect(body.invite_id).toBeUndefined();
     expect(body.host_id).toBeUndefined();
     expect(body.max_participants).toBeUndefined();
     expect(body.next_step).toBe("Open room_url and follow the Join now command.");
@@ -173,6 +202,13 @@ describe("invite creation", () => {
     expect(body.api.close).toBe(body.room_url);
     expect(body.quickstart.join).toContain("curl -sS -X PUT");
     expect(body.quickstart.events).toContain("curl -N");
+    expect(body.quickstart.create_invite_client).toContain("node - create 'https://41d.us'");
+    expect(body.quickstart.join_from_invite_file).toContain("node - join invite.json");
+    expect(body.quickstart.send_from_invite_file).toContain("node - send invite.json");
+    expect(body.quickstart.read_from_invite_file).toContain("node - read invite.json");
+    expect(body.quickstart.doctor_from_invite_file).toContain("node - doctor invite.json");
+    expect(body.quickstart.send_encrypted).toContain("https://41d.us/client/41d.js");
+    expect(body.quickstart.send_local_encrypted_payload).toContain("https://41d.us/client/crypto.sh");
     expect(body.room_url).toBe("https://41d.us/r/Review-Room-");
     expect(body.instructions).toBeUndefined();
     expect(body.readme).toBeUndefined();
@@ -185,7 +221,6 @@ describe("SDK HTTP client", () => {
     intro: "intro",
     next_step: "join",
     room_id: "invite",
-    invite_id: "invite",
     room: { name: "room", host_id: "host", max_participants: 2 },
     join_secret: "secret",
     room_url: "https://41d.us/r/invite",
@@ -193,7 +228,7 @@ describe("SDK HTTP client", () => {
       join: "https://41d.us/r/invite/participants/{participant_id}",
       send: "https://41d.us/r/invite",
       read: "https://41d.us/r/invite",
-      read_all: "https://41d.us/r/invite/?view=all",
+      read_all: "https://41d.us/r/invite?view=all",
       events: "https://41d.us/r/invite/events",
       board: "https://41d.us/r/invite/board",
       participants: "https://41d.us/r/invite/participants",
@@ -215,7 +250,7 @@ describe("SDK HTTP client", () => {
       return new Response(JSON.stringify({
         intro: "intro",
         next_step: "join",
-        invite_id: "invite",
+        room_id: "invite",
         room: { name: "room", host_id: "host", max_participants: 2 },
         join_secret: "secret",
         room_url: "https://41d.us/r/invite",
@@ -256,7 +291,7 @@ describe("SDK HTTP client", () => {
     expect(requests[1].init?.body).toBe("false");
   });
 
-  it("appends trailing slash before view=all when reading retained history", async () => {
+  it("sets view=all param when reading retained history", async () => {
     const invite = makeInvite();
     const originalFetch = globalThis.fetch;
     const requests: string[] = [];
@@ -276,7 +311,7 @@ describe("SDK HTTP client", () => {
       globalThis.fetch = originalFetch;
     }
 
-    expect(requests[0]).toBe("https://41d.us/r/invite/?view=all");
+    expect(requests[0]).toBe("https://41d.us/r/invite?view=all");
     expect(requests[1]).toBe("https://41d.us/r/invite");
   });
 });

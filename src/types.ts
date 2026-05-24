@@ -41,7 +41,7 @@ export interface BoardEntry {
 
 /** Payload sent to the DO's __init endpoint. Transient fields are consumed during init and never stored. */
 export interface InitPayload {
-  inviteId: string;
+  roomId: string;
   secretHash: string;
   expiresAt: number;
   phase: SessionPhase;
@@ -56,7 +56,7 @@ export interface InitPayload {
 }
 
 export interface InviteState {
-  inviteId: string;
+  roomId: string;
   secretHash: string;
   expiresAt: number;
   phase: SessionPhase;

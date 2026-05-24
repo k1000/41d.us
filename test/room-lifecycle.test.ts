@@ -42,7 +42,7 @@ function createMockEnv(): { RENDEZVOUS: DurableObjectNamespace } {
 }
 
 interface RoomOpts {
-  inviteId?: string;
+  roomId?: string;
   hostId?: string;
   roomName?: string;
   maxParticipants?: number;
@@ -54,14 +54,14 @@ interface RoomOpts {
 /** Bootstrap a room. Returns the session, the invite/secret, and the room path for making auth'd requests. */
 async function bootstrapRoom(opts: RoomOpts = {}): Promise<RoomFixture> {
   const session = new RendezvousSession(createMockState(), createMockEnv());
-  const inviteId = opts.inviteId ?? randomBase64Url(16);
+  const roomId = opts.roomId ?? randomBase64Url(16);
   const joinSecret = randomBase64Url(32);
-  const secretHash = await hashJoinSecret(inviteId, joinSecret);
+  const secretHash = await hashJoinSecret(roomId, joinSecret);
 
   const res = await session.fetch(new Request("https://rendezvous.internal/__init", {
     method: "POST",
     body: JSON.stringify({
-      inviteId,
+      roomId,
       secretHash,
       expiresAt: Date.now() + INVITE_TTL_MS,
       phase: "waiting" as const,
@@ -76,13 +76,13 @@ async function bootstrapRoom(opts: RoomOpts = {}): Promise<RoomFixture> {
   }));
 
   if (!res.ok) throw new Error(`bootstrapRoom failed: ${res.status}`);
-  return { session, inviteId, joinSecret, roomPath: `/r/${inviteId}` };
+  return { session, roomId, joinSecret, roomPath: `/r/${roomId}` };
 }
 
 /** Get invite state and join secret from a bootstrapped room so tests can make auth'd requests. */
 interface RoomFixture {
   session: RendezvousSession;
-  inviteId: string;
+  roomId: string;
   joinSecret: string;
   roomPath: string;
 }
@@ -124,11 +124,19 @@ async function joinParticipant(fixture: RoomFixture, participantId: string): Pro
   }));
 }
 
+function encryptedPayload(body: unknown): { encrypted_payload: string } {
+  return { encrypted_payload: JSON.stringify(body) };
+}
+
+function decodedPayload<T>(body: unknown): T {
+  return JSON.parse((body as { encrypted_payload: string }).encrypted_payload) as T;
+}
+
 async function sendMessage(fixture: RoomFixture, participantId: string, to: string, body: unknown): Promise<Response> {
   return fixture.session.fetch(new Request(`https://room${fixture.roomPath}`, {
     method: "POST",
     headers: { ...authHeaders(fixture.joinSecret, participantId), "content-type": "application/json" },
-    body: JSON.stringify({ to, body }),
+    body: JSON.stringify({ to, body: encryptedPayload(body) }),
   }));
 }
 
@@ -156,8 +164,8 @@ describe("room lifecycle", () => {
     const res = await fix.session.fetch(new Request("https://rendezvous.internal/__init", {
       method: "POST",
       body: JSON.stringify({
-        inviteId: fix.inviteId,
-        secretHash: await hashJoinSecret(fix.inviteId, "unused"),
+        roomId: fix.roomId,
+        secretHash: await hashJoinSecret(fix.roomId, "unused"),
         expiresAt: Date.now() + INVITE_TTL_MS,
         phase: "waiting" as const,
         hostId: "host",
@@ -211,7 +219,7 @@ describe("room lifecycle", () => {
     const body = (await res.json()) as { messages: RoomMessage[] };
     const fromOthers = body.messages.filter((m) => m.from !== "agent-a");
     expect(fromOthers.length).toBeGreaterThanOrEqual(1);
-    expect(fromOthers.some((m) => (m.body as { text: string }).text === "hello from b")).toBe(true);
+    expect(fromOthers.some((m) => decodedPayload<{ text: string }>(m.body).text === "hello from b")).toBe(true);
   });
 
   it("delivers direct messages only to the named recipient", async () => {
@@ -227,8 +235,8 @@ describe("room lifecycle", () => {
     const bBody = (await resB.json()) as { messages: RoomMessage[] };
     const cBody = (await resC.json()) as { messages: RoomMessage[] };
 
-    const bGot = bBody.messages.some((m) => m.from === "agent-a" && (m.body as { secret: string }).secret === "for b only");
-    const cGot = cBody.messages.some((m) => m.from === "agent-a" && (m.body as { secret: string }).secret === "for b only");
+    const bGot = bBody.messages.some((m) => m.from === "agent-a" && decodedPayload<{ secret: string }>(m.body).secret === "for b only");
+    const cGot = cBody.messages.some((m) => m.from === "agent-a" && decodedPayload<{ secret: string }>(m.body).secret === "for b only");
     expect(bGot).toBe(true);
     expect(cGot).toBe(false);
   });
@@ -236,6 +244,40 @@ describe("room lifecycle", () => {
   it("rejects send when participant has not joined", async () => {
     const res = await sendMessage(fix, "ghost", "all", { text: "boo" });
     expect(res.status).toBe(403);
+  });
+
+  it("rejects unencrypted message bodies", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      method: "POST",
+      headers: { ...authHeaders(fix.joinSecret, "agent-a"), "content-type": "application/json" },
+      body: JSON.stringify({ to: "all", body: { text: "nope" } }),
+    }));
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "message body must be encrypted",
+      hint: expect.stringContaining("/client/41d.js"),
+    });
+  });
+
+  it("accepts SDK-shape encrypted bodies", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      method: "POST",
+      headers: { ...authHeaders(fix.joinSecret, "agent-a"), "content-type": "application/json" },
+      body: JSON.stringify({ to: "all", body: { encrypted: true, ciphertext: "abc", iv: "def" } }),
+    }));
+    expect(res.status).toBe(200);
+  });
+
+  it("accepts plain key.exchange announcements", async () => {
+    await joinParticipant(fix, "agent-a");
+    const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
+      method: "POST",
+      headers: { ...authHeaders(fix.joinSecret, "agent-a"), "content-type": "application/json" },
+      body: JSON.stringify({ to: "all", intent: "key.exchange", body: { public_key: "raw-key" } }),
+    }));
+    expect(res.status).toBe(200);
   });
 
   it("rejects message body too large", async () => {
@@ -307,8 +349,10 @@ describe("room lifecycle", () => {
 
   it("returns room status", async () => {
     await joinParticipant(fix, "agent-a");
-    const body = await getRoomJson<{ room: { host_id: string }; closed: boolean; message_count: number }>(fix, "/status");
+    const body = await getRoomJson<{ room: { room_id: string; host_id: string; invite_id?: string }; closed: boolean; message_count: number }>(fix, "/status");
     expect(body.room.host_id).toBe("host");
+    expect(body.room.room_id).toBe(fix.roomId);
+    expect(body.room.invite_id).toBeUndefined();
     expect(body.closed).toBe(false);
   });
 
@@ -374,7 +418,7 @@ describe("room lifecycle", () => {
     }));
     const firstBody = (await firstRead.json()) as { mode: string; messages: RoomMessage[] };
     expect(firstBody.mode).toBe("recent");
-    expect(firstBody.messages.some((m) => (m.body as { text?: string }).text === "first")).toBe(true);
+    expect(firstBody.messages.some((m) => decodedPayload<{ text?: string }>(m.body).text === "first")).toBe(true);
 
     const secondRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}`, {
       headers: authHeaders(fix.joinSecret, "agent-b"),
@@ -387,14 +431,14 @@ describe("room lifecycle", () => {
       headers: authHeaders(fix.joinSecret, "agent-b"),
     }));
     const recentBody = (await recentRead.json()) as { messages: RoomMessage[] };
-    expect(recentBody.messages.map((m) => (m.body as { text?: string }).text)).toEqual(["second"]);
+    expect(recentBody.messages.map((m) => decodedPayload<{ text?: string }>(m.body).text)).toEqual(["second"]);
 
     const allRead = await fix.session.fetch(new Request(`https://room${fix.roomPath}?view=all`, {
       headers: authHeaders(fix.joinSecret, "agent-b"),
     }));
     const allBody = (await allRead.json()) as { mode: string; messages: RoomMessage[] };
     expect(allBody.mode).toBe("all");
-    expect(allBody.messages.map((m) => (m.body as { text?: string }).text)).toEqual(["first", "second"]);
+    expect(allBody.messages.map((m) => decodedPayload<{ text?: string }>(m.body).text)).toEqual(["first", "second"]);
   });
 
   it("read markers are isolated per participant", async () => {
@@ -411,7 +455,7 @@ describe("room lifecycle", () => {
       headers: authHeaders(fix.joinSecret, "agent-c"),
     }));
     const cBody = (await cRead.json()) as { messages: RoomMessage[] };
-    expect(cBody.messages.some((m) => (m.body as { text?: string }).text === "shared")).toBe(true);
+    expect(cBody.messages.some((m) => decodedPayload<{ text?: string }>(m.body).text === "shared")).toBe(true);
   });
 });
 

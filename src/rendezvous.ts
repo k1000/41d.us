@@ -1,10 +1,10 @@
 import { json, respondNegotiated } from "./format";
 import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
 import { authenticateParticipant, requireHost, withAuth, withJoinedParticipant } from "./room/auth";
-import { RoomBoardController } from "./room/board-controller";
+import { RoomBoardController, validateBoard, wrapInitialBoard } from "./room/board-controller";
 import { RoomEvents } from "./room/events";
 import { roomExport, roomInfo, roomStatus } from "./room/info";
-import { buildInitialInviteState } from "./room/lifecycle";
+import { createInitialMessage } from "./room/messages";
 import { buildReadResponse, createSentMessage, isReadableMessage, parseReadOptions } from "./room/messages";
 import { activeParticipants, isParticipantJoined, withReadReceipt } from "./room/participants";
 import { RoomParticipantController } from "./room/participant-controller";
@@ -43,15 +43,25 @@ export class RendezvousSession {
     roomUrl.search = "";
     return respondNegotiated(
       request,
-      () => inviteInstructionsPage(invite.inviteId, roomUrl.toString()),
-      () => inviteInstructionsMarkdown(invite.inviteId, roomUrl.toString()),
+      () => inviteInstructionsPage(invite.roomId, roomUrl.toString()),
+      () => inviteInstructionsMarkdown(invite.roomId, roomUrl.toString()),
     );
+  }
+
+  private buildInitialInviteState(body: InitPayload, existing: InviteState | undefined): InviteState | Response {
+    if (existing && existing.phase !== "closed") return json({ error: "invite already exists" }, 409);
+    const firstMessage = body.firstMessage ? [createInitialMessage(body)] : [];
+    const board = wrapInitialBoard(body.initialBoard, body.hostId);
+    const validation = validateBoard(body.boardSchema, board);
+    if (validation) return validation;
+    const { initialBoard: _ib, firstMessage: _fm, ...stateToStore } = body;
+    return { ...stateToStore, nextSeq: firstMessage.length, participants: {}, messages: firstMessage, board } satisfies InviteState;
   }
 
   private async handleInit(request: Request): Promise<Response> {
     const body = (await request.json()) as InitPayload;
     const existing = await this.storage.getInvite();
-    const initState = buildInitialInviteState(body, existing);
+    const initState = this.buildInitialInviteState(body, existing);
     if (initState instanceof Response) return initState;
     await this.storage.putInvite(initState);
     return json({ ok: true });

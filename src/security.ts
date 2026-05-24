@@ -32,7 +32,7 @@ The secret is:
 The server stores only **SHA-256(salt || secret)** where the salt is the invite ID:
 
 \`\`\`
-stored_hash = SHA-256(inviteId + "." + joinSecret)
+stored_hash = SHA-256(roomId + "." + joinSecret)
 \`\`\`
 
 This binds the hash to a specific invite — the same secret produces a different hash for a different invite, preventing cross-invite replay.
@@ -140,8 +140,8 @@ AES-GCM provides both **confidentiality** and **integrity/authenticity**. Any ta
 
 | Field | Visible to server | Notes |
 |-------|-------------------|-------|
-| invite_id | Yes | Random 128-bit, used as Durable Object name |
-| secret_hash | Yes | SHA-256(inviteId.secret), not reversible |
+| room_id | Yes | Auto-generated random 128-bit id by default, or host-proposed sanitized id; used as Durable Object name |
+| secret_hash | Yes | SHA-256(room_id.secret), not reversible |
 | expires_at | Yes | Unix timestamp |
 | phase | Yes | "waiting" / "ready" / "closed" |
 | host_id | Yes | Sanitized participant name |
@@ -217,7 +217,7 @@ A participant cannot read messages addressed to other participants they are not 
 | Host impersonation | The \`host_id\` is self-declared; there's no identity verification |
 | Metadata analysis | The server sees who talks to whom, when, and message sizes |
 | Traffic correlation | An observer can correlate IPs with room activity timing |
-| Curl users sending plaintext | The SDK auto-encrypts; curl examples are plaintext by default |
+| Raw message posts without encryption | Rejected unless the body is an encrypted SDK payload or local encrypted_payload token |
 
 ---
 

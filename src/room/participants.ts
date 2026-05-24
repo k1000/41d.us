@@ -1,6 +1,6 @@
 import { json } from "../format";
 import type { InviteState, Participant } from "../types";
-import { sanitizeId } from "../utils";
+import { sanitizeId } from "../constants";
 
 interface ParticipantProfile {
   state?: "free" | "busy";

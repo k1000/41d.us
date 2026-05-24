@@ -44,7 +44,7 @@ export async function requireHost(request: Request, invite: InviteState, action:
 
 async function authorizeToken(invite: InviteState, token: string | undefined): Promise<Response | undefined> {
   if (!token) return json({ error: "authorization token is required" }, 401);
-  const tokenHash = await hashJoinSecret(invite.inviteId, token);
+  const tokenHash = await hashJoinSecret(invite.roomId, token);
   if (tokenHash !== invite.secretHash) return json({ error: "invalid authorization token" }, 403);
   return undefined;
 }

@@ -1,12 +1,10 @@
 import { createSdkCryptoSession } from "./sdk-crypto-session";
-import { request } from "./sdk-request";
 import type { Recipient, RoomMessage } from "./types";
 
 export interface Invite {
   intro: string;
   next_step: string;
   room_id: string;
-  invite_id: string;
   room: { name: string; host_id: string; max_participants: number };
   join_secret: string;
   room_url: string;
@@ -79,6 +77,20 @@ export interface RoomClient {
   export(): Promise<unknown>;
 }
 
+async function request<T>(url: string, invite: Invite, options: { method?: string; participantId?: string; body?: unknown } = {}): Promise<T> {
+  const headers: Record<string, string> = { authorization: `Bearer ${invite.join_secret}` };
+  if (options.participantId) headers["x-participant-id"] = options.participantId;
+  const hasBody = options.body !== undefined;
+  if (hasBody) headers["content-type"] = "application/json";
+  const response = await fetch(url, {
+    method: options.method ?? "GET",
+    headers,
+    body: hasBody ? JSON.stringify(options.body) : undefined,
+  });
+  if (!response.ok) throw new Error(`${url} failed: ${response.status} ${await response.text()}`);
+  return (await response.json()) as T;
+}
+
 export async function createInvite(baseUrl = "https://41d.us", options: CreateInviteOptions = {}): Promise<Invite> {
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/invites`, {
     method: "POST",
@@ -141,10 +153,7 @@ export async function joinRoom(invite: Invite, participantId: string, options: {
 
     async read(options = {}) {
       const url = new URL(invite.room_url);
-      if (options.all) {
-        if (!url.pathname.endsWith("/")) url.pathname += "/";
-        url.searchParams.set("view", "all");
-      }
+      if (options.all) url.searchParams.set("view", "all");
       if (options.includeSelf) url.searchParams.set("include_self", "true");
       const result = await request<{ cursor: number; messages: RoomMessage[] }>(url.toString(), invite, { participantId });
       cursor = result.cursor;

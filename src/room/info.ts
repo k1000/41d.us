@@ -3,7 +3,7 @@ import { activeParticipants } from "./participants";
 
 export function roomInfo(invite: InviteState) {
   return {
-    invite_id: invite.inviteId,
+    room_id: invite.roomId,
     name: invite.roomName,
     host_id: invite.hostId,
     max_participants: invite.maxParticipants,

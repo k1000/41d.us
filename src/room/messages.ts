@@ -1,4 +1,5 @@
 import { MAX_BODY_BYTES, MAX_MESSAGES } from "../constants";
+import { isEncryptedBody } from "../crypto";
 import { json } from "../format";
 import type { InitPayload, InviteState, Recipient, RoomMessage } from "../types";
 import { isParticipantJoined } from "./participants";
@@ -36,6 +37,12 @@ export function buildReadResponse(invite: InviteState, participantId: string, me
 
 export function createSentMessage(body: Record<string, unknown>, participantId: string, invite: InviteState): { message: RoomMessage; messages: RoomMessage[]; seq: number } | Response {
   if (ENCODER.encode(JSON.stringify(body.body ?? {})).length > MAX_BODY_BYTES) return json({ error: "message body too large" }, 413);
+  if (!isAllowedPlainProtocolMessage(body) && !isOpaqueEncryptedBody(body.body)) {
+    return json({
+      error: "message body must be encrypted",
+      hint: "Use /client/41d.js for send/read, or send an encrypted SDK body / encrypted_payload token.",
+    }, 400);
+  }
   const to: Recipient = (body.to as Recipient) ?? "all";
   if (!validRecipient(invite, to)) return json({ error: "recipient not joined" }, 404);
   const seq = invite.nextSeq + 1;
@@ -86,4 +93,16 @@ function validRecipient(invite: InviteState, to: Recipient): boolean {
   if (to === "all") return true;
   const recipients = Array.isArray(to) ? to : [to];
   return recipients.every((id) => isParticipantJoined(invite.participants, id));
+}
+
+function isAllowedPlainProtocolMessage(body: Record<string, unknown>): boolean {
+  return body.intent === "key.exchange";
+}
+
+function isOpaqueEncryptedBody(body: unknown): boolean {
+  if (typeof body === "object" && body !== null) {
+    const record = body as Record<string, unknown>;
+    if (typeof record.encrypted_payload === "string") return true;
+  }
+  return isEncryptedBody(body);
 }
