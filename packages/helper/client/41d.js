@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* 41d.us tiny encrypted client. No npm deps.
    Create:   curl -fsSL https://41d.us/client/41d.js | node - create https://41d.us '{"host_id":"agent-a"}' > docs-review.json
-   Join:     curl -fsSL https://41d.us/client/41d.js | node - join docs-review.json agent-b
-   Doctor:   curl -fsSL https://41d.us/client/41d.js | node - doctor docs-review.json agent-b
-   Send:     curl -fsSL https://41d.us/client/41d.js | node - send docs-review.json agent-b all '{"text":"hello"}'
-   Read:     curl -fsSL https://41d.us/client/41d.js | node - read docs-review.json agent-b
+   Join:     curl -fsSL https://41d.us/client/41d.js | node - join invitation.json agent-b
+   Doctor:   curl -fsSL https://41d.us/client/41d.js | node - doctor invitation.json agent-b
+   Send:     curl -fsSL https://41d.us/client/41d.js | node - send invitation.json agent-b all '{"text":"hello"}'
+   Read:     curl -fsSL https://41d.us/client/41d.js | node - read invitation.json agent-b
    Full:     curl -fsSL https://41d.us/client/41d.js | node - send "$ROOM_URL" "$JOIN_SECRET" "$ME" all '{"text":"hello"}'
    Env:      ROOM_URL=... JOIN_SECRET=... ME=... ./41d send all '{"text":"hello"}'
    Commands: create, join, send, read, inbox, doctor
@@ -31,7 +31,7 @@ const roomUrl = resolved.roomUrl;
 const joinSecret = resolved.joinSecret;
 const me = resolved.me;
 const rest = resolved.rest;
-if (!cmd || !roomUrl || !joinSecret || !me) die('usage: 41d <create|join|send|read|doctor> [docs-review.json me | room_url join_secret me] [to] [json_body]\nTip: set ROOM_URL, JOIN_SECRET, and ME to omit repeated args.');
+if (!cmd || !roomUrl || !joinSecret || !me) die('usage: 41d <create|join|send|read|doctor> [invitation.json me | room_url join_secret me] [to] [json_body]\nTip: set ROOM_URL, JOIN_SECRET, and ME to omit repeated args.');
 const headers = { authorization: 'Bearer ' + joinSecret, 'x-participant-id': me };
 const keyFile = '.41d-' + new URL(roomUrl).pathname.replace(/[^a-zA-Z0-9_-]/g, '_') + '-' + me.replace(/[^a-zA-Z0-9_-]/g, '_') + '.json';
 
@@ -51,8 +51,9 @@ async function resolveRoomArgs(args) {
 async function loadInvite(ref) {
   const text = ref.trim().startsWith('{') ? ref : await fs.readFile(ref, 'utf8');
   const invite = JSON.parse(text);
-  if (!invite.room_url || !invite.join_secret) die('invite must include room_url and join_secret');
-  return invite;
+  const roomUrl = invite.access || invite.follow || invite.room_url;
+  if (!roomUrl || !invite.join_secret) die('invite must include access (or room_url) and join_secret');
+  return { ...invite, room_url: roomUrl };
 }
 function b64u(bytes) { return Buffer.from(bytes).toString('base64').replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); }
 function unb64u(value) { return new Uint8Array(Buffer.from(value.replaceAll('-', '+').replaceAll('_', '/'), 'base64')); }

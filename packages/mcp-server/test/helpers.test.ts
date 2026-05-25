@@ -15,9 +15,15 @@ describe("mcp-server helpers", () => {
       expect(invite.room_id).toBe("abc");
     });
 
+    it("parses a minimal access handoff", () => {
+      const invite = parseInvite(JSON.stringify({ access: "https://41d.us/r/abc", join_secret: "secret" }));
+      expect(invite.room_url).toBe("https://41d.us/r/abc");
+      expect(invite.room_id).toBe("abc");
+    });
+
     it("throws when required fields are missing", () => {
-      expect(() => parseInvite(JSON.stringify({ room_url: "x", join_secret: "y", room_id: "z" }))).toThrow(/api/);
-      expect(() => parseInvite(JSON.stringify({ room_url: "x", join_secret: "y", api: {} }))).toThrow();
+      expect(() => parseInvite(JSON.stringify({ access: "https://41d.us/r/abc" }))).toThrow(/join_secret/);
+      expect(() => parseInvite(JSON.stringify({ join_secret: "y" }))).toThrow(/access/);
       expect(() => parseInvite("{}")).toThrow();
     });
 

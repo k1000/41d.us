@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createRoom } from "@41d/sdk";
+import { buildMinimalInvite, createRoom, normalizeInvite } from "@41d/sdk";
 import { getOrCreateSession } from "@41d/sdk/session";
 import type { Invite, RoomClient } from "@41d/sdk";
 
@@ -12,14 +12,8 @@ const sessions = new Map<string, RoomClient>();
 // ── Invite loading ──────────────────────────────────────────────
 
 function loadInviteFromArg(ref: string): Invite {
-  const text = ref.trim().startsWith("{")
-    ? ref
-    : readFileSync(ref, "utf8");
-  const invite = JSON.parse(text) as Invite;
-  if (!invite.room_url || !invite.join_secret || !invite.room_id || !invite.api) {
-    throw new Error("invalid invite: must contain room_url, join_secret, room_id, and api");
-  }
-  return invite;
+  const text = ref.trim().startsWith("{") ? ref : readFileSync(ref, "utf8");
+  return normalizeInvite(JSON.parse(text));
 }
 
 interface ParsedArgs {
@@ -66,34 +60,7 @@ function resolveInvite(parsed: ParsedArgs): Invite {
   if (parsed.roomUrlOrInvite && parsed.joinSecret && parsed.me) {
     // room-url form: we need to construct a minimal invite. For create, no invite needed.
     if (parsed.cmd === "create") throw new Error("create does not use room-url form");
-    // Construct a minimal invite from room-url + join-secret
-    const roomUrl = parsed.roomUrlOrInvite.replace(/\/$/, "");
-    const roomId = roomUrl.split("/").pop() ?? "";
-    const origin = new URL(roomUrl).origin;
-    return {
-      intro: "",
-      next_step: "",
-      room_id: roomId,
-      room: { name: "", purpose: "", host_id: "", max_participants: 16 },
-      join_secret: parsed.joinSecret,
-      room_url: roomUrl,
-      api: {
-        join: `${roomUrl}/participants/{participant_id}`,
-        send: roomUrl,
-        read: roomUrl,
-        read_all: `${origin}/r/${roomId}/?view=all`,
-        events: `${roomUrl}/events`,
-        board: `${roomUrl}/board`,
-        participants: `${roomUrl}/participants`,
-        status: `${roomUrl}/status`,
-        export: `${roomUrl}/export`,
-        leave: `${roomUrl}/participants/{participant_id}`,
-        kick: `${roomUrl}/participants/{target_id}`,
-        close: roomUrl,
-      },
-      skill: `${origin}/skill/SKILL.md`,
-      expires_at: "",
-    };
+    return buildMinimalInvite(parsed.roomUrlOrInvite, parsed.joinSecret);
   }
   // invite-file or inline-JSON form
   if (parsed.roomUrlOrInvite) {

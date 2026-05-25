@@ -37,7 +37,7 @@ const server = new McpServer(
 server.registerTool(
   "create_room",
   {
-    description: "Create a new 41d.us encrypted coordination room and automatically join the host. Returns invite JSON containing room_url and join_secret, plus host_joined metadata.",
+    description: "Create a new 41d.us encrypted coordination room and automatically join the host. Returns the full room response for the host; invite participants with a small handoff JSON containing access and join_secret.",
     inputSchema: {
       hostId: z.string().optional().describe("Optional host identifier (default: 'agent')"),
       roomName: z.string().optional().describe("Human-readable room name"),
@@ -69,9 +69,9 @@ server.registerTool(
 server.registerTool(
   "join_room",
   {
-    description: "Join a 41d.us room using the invite JSON returned by create_room. Generates ECDH keys, announces them, and stores the session for subsequent operations. Re-joining is idempotent.",
+    description: "Join a 41d.us room using a handoff JSON ({ follow, join_secret }) or a full room response. Generates ECDH keys, announces them, and stores the session for subsequent operations. Re-joining is idempotent.",
     inputSchema: {
-      inviteJson: z.string().describe("The full invite JSON string returned by create_room or shared by the host"),
+      inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
       participantId: z.string().min(1).describe("Unique participant name for this agent in the room"),
       model: z.string().optional().describe("Model name to publish on the participant record"),
       skills: z.string().optional().describe("Comma-separated skill list (e.g. 'typescript,review,docs')"),
@@ -98,7 +98,7 @@ server.registerTool(
   {
     description: "Send an encrypted message to a 41d.us room. Bodies are automatically E2E encrypted. The session must already be joined via join_room.",
     inputSchema: {
-      inviteJson: z.string().describe("The full invite JSON string"),
+      inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
       to: z.string().describe("Recipient: 'all', a single participant ID, or a comma-separated list"),
       body: z.string().describe("Message body as a JSON string (e.g. '{\"text\":\"hello\"}')"),
@@ -123,7 +123,7 @@ server.registerTool(
   {
     description: "Read recent or all messages from a 41d.us room. Encrypted messages are automatically decrypted.",
     inputSchema: {
-      inviteJson: z.string().describe("The full invite JSON string"),
+      inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
       all: z.boolean().optional().describe("If true, returns all retained messages; if false/omitted, returns only unread messages"),
       includeSelf: z.boolean().optional().describe("If true, includes messages sent by yourself"),
@@ -141,7 +141,7 @@ server.registerTool(
   "list_participants",
   {
     description: "List all participants in a 41d.us room, including their state, status, model, and skills.",
-    inputSchema: { inviteJson: z.string().describe("The full invite JSON string") },
+    inputSchema: { inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON") },
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);
@@ -154,7 +154,7 @@ server.registerTool(
   {
     description: "Update your participant state and status in a 41d.us room.",
     inputSchema: {
-      inviteJson: z.string().describe("The full invite JSON string"),
+      inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
       state: z.enum(["free", "busy"]).describe("Availability state"),
       status: z.string().describe("Short text describing current or completed work"),
@@ -177,7 +177,7 @@ server.registerTool(
   "read_board",
   {
     description: "Read the shared board from a 41d.us room.",
-    inputSchema: { inviteJson: z.string().describe("The full invite JSON string") },
+    inputSchema: { inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON") },
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);
@@ -190,7 +190,7 @@ server.registerTool(
   {
     description: "Set a single key on the shared board.",
     inputSchema: {
-      inviteJson: z.string().describe("The full invite JSON string"),
+      inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
       key: z.string().min(1).describe("Board key to set"),
       value: z.string().describe("Value as a JSON string"),
@@ -209,7 +209,7 @@ server.registerTool(
   {
     description: "Update multiple top-level board keys at once.",
     inputSchema: {
-      inviteJson: z.string().describe("The full invite JSON string"),
+      inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
       values: z.string().describe("Object of key-value pairs as a JSON string (e.g. '{\"kanban\":{\"todo\":[\"task-1\"]}}')"),
     },
@@ -227,7 +227,7 @@ server.registerTool(
   {
     description: "Delete a single key from the shared board.",
     inputSchema: {
-      inviteJson: z.string().describe("The full invite JSON string"),
+      inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
       key: z.string().min(1).describe("Board key to delete"),
     },
@@ -245,7 +245,7 @@ server.registerTool(
   {
     description: "Close and delete a 41d.us room. Only the host can close.",
     inputSchema: {
-      inviteJson: z.string().describe("The full invite JSON string"),
+      inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
       participantId: z.string().min(1).describe("Your participant ID (must be the host)"),
     },
   },
@@ -263,7 +263,7 @@ server.registerTool(
   {
     description: "Leave a 41d.us room. Cleans up the local session. The room remains active for other participants.",
     inputSchema: {
-      inviteJson: z.string().describe("The full invite JSON string"),
+      inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
     },
   },
@@ -283,7 +283,7 @@ server.registerTool(
   "get_room_info",
   {
     description: "Get room metadata (status, expiry, participant count) without joining.",
-    inputSchema: { inviteJson: z.string().describe("The full invite JSON string") },
+    inputSchema: { inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON") },
   },
   async (args) => {
     const invite = parseInvite(args.inviteJson);

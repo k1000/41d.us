@@ -1,4 +1,5 @@
 import type { Invite, RoomClient } from "@41d/sdk";
+import { normalizeInvite } from "@41d/sdk";
 import { getOrCreateSession } from "@41d/sdk/session";
 
 // ── Session store ───────────────────────────────────────────────
@@ -9,11 +10,7 @@ export const sessions = new Map<string, RoomClient>();
 // ── Parsing helpers ─────────────────────────────────────────────
 
 export function parseInvite(inviteJson: string): Invite {
-  const parsed = JSON.parse(inviteJson);
-  if (!parsed.room_url || !parsed.join_secret || !parsed.room_id || !parsed.api) {
-    throw new Error("Invalid invite JSON: must contain room_url, join_secret, room_id, and api");
-  }
-  return parsed as Invite;
+  return normalizeInvite(JSON.parse(inviteJson));
 }
 
 export function parseSkills(value?: string): string[] | undefined {
