@@ -9,7 +9,7 @@ function rpc(method: string, params?: Record<string, unknown>): Request {
   });
 }
 
-async function resultText(response: Response): Promise<any> {
+async function resultText(response: Response): Promise<unknown> {
   const body = await response.json() as { result: { content: Array<{ text: string }> } };
   return JSON.parse(body.result.content[0].text);
 }

@@ -43,6 +43,9 @@ export interface RoomOpts {
   firstMessage?: Record<string, unknown>;
   boardSchema?: Record<string, unknown>;
   initialBoard?: Record<string, unknown>;
+  boardAcls?: import("../../src/types").BoardAcls;
+  roomStates?: Record<string, import("../../src/types").RoomStateConfig>;
+  phase?: string;
 }
 
 /** Bootstrap a room. Returns the session, the invite/secret, and the room path for making auth'd requests. */
@@ -58,13 +61,15 @@ export async function bootstrapRoom(opts: RoomOpts = {}): Promise<RoomFixture> {
       roomId,
       secretHash,
       expiresAt: Date.now() + INVITE_TTL_MS,
-      phase: "waiting" as const,
+      phase: opts.phase ?? "waiting",
       hostId: opts.hostId ?? "host",
       roomName: opts.roomName ?? "test room",
       maxParticipants: opts.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS,
       ...(opts.firstMessage ? { firstMessage: opts.firstMessage } : {}),
       ...(opts.boardSchema ? { boardSchema: opts.boardSchema } : {}),
       ...(opts.initialBoard ? { initialBoard: opts.initialBoard } : {}),
+      ...(opts.boardAcls ? { boardAcls: opts.boardAcls } : {}),
+      ...(opts.roomStates ? { roomStates: opts.roomStates } : {}),
     }),
     headers: { "content-type": "application/json" },
   }));
