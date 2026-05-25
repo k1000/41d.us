@@ -62,28 +62,29 @@ export class RoomParticipantController {
     const parsed = await parseRequest(request);
     const auth = await authenticateParticipant(invite, parsed, participantIdFromPath);
     if (auth instanceof Response) return auth;
-    const participantId = normalizeParticipantId(participantIdFromPath);
-    if (participantId instanceof Response) return participantId;
-    if (auth.participantId !== participantId && auth.participantId !== invite.hostId) {
+    const actorId = auth.participantId;
+    const targetId = normalizeParticipantId(participantIdFromPath);
+    if (targetId instanceof Response) return targetId;
+    if (actorId !== targetId && actorId !== invite.hostId) {
       return json({ error: "only participant or host can update participant status" }, 403);
     }
-    if (!isParticipantJoined(invite.participants, participantId)) {
+    if (!isParticipantJoined(invite.participants, targetId)) {
       return json({ error: "participant has not joined" }, 403);
     }
     const profile = parseParticipantProfile(parsed.body);
     if (profile instanceof Response) return profile;
-    const updated = withUpdatedParticipant(invite, participantId, profile);
+    const updated = withUpdatedParticipant(invite, targetId, profile);
     await this.storage.putInvite(updated);
-    return json({ ok: true, participant: updated.participants[participantId] });
+    return json({ ok: true, participant: updated.participants[targetId] });
   }
 
   async delete(request: Request, invite: InviteState, targetIdFromPath: string): Promise<Response> {
     const parsed = await parseRequest(request);
     const auth = await authenticateParticipant(invite, parsed, targetIdFromPath);
     if (auth instanceof Response) return auth;
+    const actorId = auth.participantId;
     const targetId = normalizeParticipantId(targetIdFromPath);
     if (targetId instanceof Response) return targetId;
-    const actorId = auth.participantId;
     if (actorId === targetId) return this.leave(invite, targetId);
     return this.kick(invite, actorId, targetId);
   }

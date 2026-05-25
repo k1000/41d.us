@@ -1,8 +1,7 @@
 import { json, respondNegotiated } from "./format";
 import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
 import { DEFAULT_EXTEND_MS, MAX_INVITE_TTL_MS, MIN_INVITE_TTL_MS } from "./constants";
-import { parseRequest, authenticate, authenticateParticipant } from "./room/auth-context";
-import { isParticipantJoined } from "./room/participants";
+import { tokenAuthThen, participantAuthThen, joinedThen } from "./room/auth-context";
 import { RoomBoardController } from "./room/board-controller";
 import { RoomEvents } from "./room/events";
 import type { RoomEventBus } from "./room/events";
@@ -95,93 +94,84 @@ export class RendezvousSession implements DurableObject {
     });
   }
 
-  private async handleExtendTtl(
+  private handleExtendTtl(
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    const parsed = await parseRequest(request);
-    const auth = await authenticateParticipant(invite, parsed);
-    if (auth instanceof Response) return auth;
-    if (auth.participantId !== invite.hostId) return json({ error: "only host can extend TTL" }, 403);
+    return participantAuthThen(invite, request, async (auth) => {
+      if (auth.participantId !== invite.hostId) return json({ error: "only host can extend TTL" }, 403);
 
-    const rawExtend = auth.body.extend_ms as number | undefined;
-    const requested = typeof rawExtend === "number" && Number.isFinite(rawExtend)
-      ? Math.trunc(rawExtend)
-      : DEFAULT_EXTEND_MS;
-    const maxExtend = Date.now() + MAX_INVITE_TTL_MS - invite.expiresAt;
-    const extendMs = Math.min(Math.max(requested, MIN_INVITE_TTL_MS), Math.max(maxExtend, MIN_INVITE_TTL_MS));
+      const rawExtend = auth.body.extend_ms as number | undefined;
+      const requested = typeof rawExtend === "number" && Number.isFinite(rawExtend)
+        ? Math.trunc(rawExtend)
+        : DEFAULT_EXTEND_MS;
+      const maxExtend = Date.now() + MAX_INVITE_TTL_MS - invite.expiresAt;
+      const extendMs = Math.min(Math.max(requested, MIN_INVITE_TTL_MS), Math.max(maxExtend, MIN_INVITE_TTL_MS));
 
-    const newExpiresAt = invite.expiresAt + extendMs;
-    await this.storage.patchAndSave(invite, { expiresAt: newExpiresAt });
-    await this.storage.scheduleCleanup(newExpiresAt);
-    return json({
-      ok: true,
-      extended_ms: extendMs,
-      expires_at: new Date(newExpiresAt).toISOString(),
+      const newExpiresAt = invite.expiresAt + extendMs;
+      await this.storage.patchAndSave(invite, { expiresAt: newExpiresAt });
+      await this.storage.scheduleCleanup(newExpiresAt);
+      return json({
+        ok: true,
+        extended_ms: extendMs,
+        expires_at: new Date(newExpiresAt).toISOString(),
+      });
     });
   }
 
-  private async handleEvents(
+  private handleEvents(
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    const url = new URL(request.url);
-    const parsed = await parseRequest(request);
-    const auth = await authenticateParticipant(invite, parsed);
-    if (auth instanceof Response) return auth;
-    if (!isParticipantJoined(invite.participants, auth.participantId)) {
-      return json({ error: "participant has not joined" }, 403);
-    }
-    const includeSelf = url.searchParams.get("include_self") === "true";
-    return this.events.subscribe(auth.participantId, includeSelf, invite.nextSeq);
-  }
-
-  private async handleParticipants(
-    request: Request,
-    invite: InviteState,
-  ): Promise<Response> {
-    const parsed = await parseRequest(request);
-    const err = await authenticate(invite, parsed);
-    if (err) return err;
-    return json({
-      room: roomInfo(invite),
-      participants: activeParticipants(invite.participants),
+    return joinedThen(invite, request, async (auth) => {
+      const url = new URL(request.url);
+      const includeSelf = url.searchParams.get("include_self") === "true";
+      return this.events.subscribe(auth.participantId, includeSelf, invite.nextSeq);
     });
   }
 
-  private async handleStatus(
+  private handleParticipants(
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    const parsed = await parseRequest(request);
-    const err = await authenticate(invite, parsed);
-    if (err) return err;
-    return json({
-      ...roomStatus(invite),
-      closed: invite.phase === "closed",
+    return tokenAuthThen(invite, request, async () => {
+      return json({
+        room: roomInfo(invite),
+        participants: activeParticipants(invite.participants),
+      });
     });
   }
 
-  private async handleClose(
+  private handleStatus(
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    const parsed = await parseRequest(request);
-    const auth = await authenticateParticipant(invite, parsed);
-    if (auth instanceof Response) return auth;
-    if (auth.participantId !== invite.hostId) return json({ error: "only host can close room" }, 403);
-    await this.storage.patchAndSave(invite, { phase: "closed" });
-    return json({ ok: true, closed: true });
+    return tokenAuthThen(invite, request, async () => {
+      return json({
+        ...roomStatus(invite),
+        closed: invite.phase === "closed",
+      });
+    });
   }
 
-  private async handleExport(
+  private handleClose(
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    const parsed = await parseRequest(request);
-    const auth = await authenticateParticipant(invite, parsed);
-    if (auth instanceof Response) return auth;
-    if (auth.participantId !== invite.hostId) return json({ error: "only host can export room" }, 403);
-    return json(roomExport(invite));
+    return participantAuthThen(invite, request, async (auth) => {
+      if (auth.participantId !== invite.hostId) return json({ error: "only host can close room" }, 403);
+      await this.storage.patchAndSave(invite, { phase: "closed" });
+      return json({ ok: true, closed: true });
+    });
+  }
+
+  private handleExport(
+    request: Request,
+    invite: InviteState,
+  ): Promise<Response> {
+    return participantAuthThen(invite, request, async (auth) => {
+      if (auth.participantId !== invite.hostId) return json({ error: "only host can export room" }, 403);
+      return json(roomExport(invite));
+    });
   }
 }

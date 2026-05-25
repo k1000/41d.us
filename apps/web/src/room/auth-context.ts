@@ -91,6 +91,18 @@ export async function tokenAuthThen(
   return fn();
 }
 
+/** Validate token + participant ID (no join check), then run fn with the auth result. */
+export async function participantAuthThen(
+  invite: InviteState,
+  request: Request,
+  fn: (auth: AuthSuccess) => Promise<Response>,
+): Promise<Response> {
+  const parsed = await parseRequest(request);
+  const auth = await authenticateParticipant(invite, parsed);
+  if (auth instanceof Response) return auth;
+  return fn(auth);
+}
+
 /** Validate token + participant ID, require joined, then run fn with the auth result. */
 export async function joinedThen(
   invite: InviteState,
