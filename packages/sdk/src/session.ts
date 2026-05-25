@@ -1,3 +1,4 @@
+import { RoomApiError } from "./errors";
 import { joinRoom, resumeRoom } from "./sdk";
 import type { Invite, RoomClient } from "./sdk";
 
@@ -30,9 +31,7 @@ export async function getOrCreateSession(
   try {
     client = await joinRoom(invite, participantId, options);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // Any 409 — already joined, room full, etc. — try resuming.
-    if (!msg.includes("409") && !msg.includes("already joined")) throw err;
+    if (!(err instanceof RoomApiError && err.status === 409)) throw err;
     client = await resumeRoom(invite, participantId);
     await client.announceKey();
   }

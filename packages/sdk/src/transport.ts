@@ -1,3 +1,4 @@
+import { RoomApiError } from "./errors";
 import type { Invite } from "./sdk";
 
 export async function request<T>(
@@ -14,6 +15,6 @@ export async function request<T>(
     headers,
     body: hasBody ? JSON.stringify(options.body) : undefined,
   });
-  if (!response.ok) throw new Error(`${url} failed: ${response.status} ${await response.text()}`);
+  if (!response.ok) throw new RoomApiError(response.status, await response.text(), url);
   return (await response.json()) as T;
 }

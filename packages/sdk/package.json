@@ -9,6 +9,7 @@
     "./crypto": "./src/crypto.ts",
     "./crypto-session": "./src/sdk-crypto-session.ts",
     "./types": "./src/types.ts",
-    "./session": "./src/session.ts"
+    "./session": "./src/session.ts",
+    "./errors": "./src/errors.ts"
   }
 }
