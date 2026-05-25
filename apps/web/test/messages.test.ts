@@ -20,6 +20,7 @@ function makeInvite(overrides: Partial<InviteState> = {}): InviteState {
     phase: "ready",
     hostId: "host",
     roomName: "test",
+    purpose: "test",
     maxParticipants: 16,
     nextSeq: 0,
     participants: {},

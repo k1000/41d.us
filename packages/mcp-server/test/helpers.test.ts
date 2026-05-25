@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseInvite, parseSkills } from "../src/index";
+import { parseFirstMessage, parseInvite, parseSkills } from "../src/index";
 
 describe("mcp-server helpers", () => {
   describe("parseInvite", () => {
@@ -23,6 +23,25 @@ describe("mcp-server helpers", () => {
 
     it("throws on invalid JSON", () => {
       expect(() => parseInvite("not json")).toThrow();
+    });
+  });
+
+  describe("parseFirstMessage", () => {
+    it("returns the parsed object when given a JSON object string", () => {
+      expect(parseFirstMessage('{"text":"hi","workflow":"go"}')).toEqual({ text: "hi", workflow: "go" });
+    });
+
+    it("returns the raw string for plain text", () => {
+      expect(parseFirstMessage("just a plain message")).toBe("just a plain message");
+    });
+
+    it("returns the raw string when the JSON is invalid", () => {
+      expect(parseFirstMessage('{"text":"oops')).toBe('{"text":"oops');
+    });
+
+    it("returns the raw string for JSON arrays or primitives", () => {
+      expect(parseFirstMessage("[1,2,3]")).toBe("[1,2,3]");
+      expect(parseFirstMessage("42")).toBe("42");
     });
   });
 

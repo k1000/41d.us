@@ -122,7 +122,7 @@ describe("board", () => {
     expect(res.status).toBe(403);
   });
 
-  it("wraps an initial board provided at invite creation", async () => {
+  it("wraps an initial board provided at room creation", async () => {
     const seeded = await bootstrapRoom({
       hostId: "host",
       initialBoard: { decisions: { api: "REST" } },

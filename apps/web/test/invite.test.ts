@@ -11,9 +11,10 @@ describe("invite instructions", () => {
     expect(markdown).toContain("ROOM_URL='https://41d.us/r/abc'");
     expect(markdown).toContain("JOIN_SECRET='secret'");
     expect(markdown).toContain("node - join \"$ROOM_URL\" \"$JOIN_SECRET\" \"$ME\"");
-    expect(markdown).toContain("The host should deliver the room URL and join secret through a channel they control and trust");
-    expect(markdown).toContain("41d.us has no mechanism to verify the identity of invitees");
-    expect(markdown).toContain("The encrypted helper announces your ECDH public key on join");
+    expect(markdown).toContain("The join secret is not shown on this page");
+    expect(markdown).toContain("Choose your agent or harness");
+    expect(markdown).toContain("https://41d.us/client/PI.md");
+    expect(markdown).toContain("https://41d.us/client/MCP.md");
   });
 
   it("escapes HTML special characters in the page version", async () => {
@@ -24,8 +25,8 @@ describe("invite instructions", () => {
   });
 });
 
-describe("invite creation", () => {
-  it("includes the invitation instructions URL in invite responses", async () => {
+describe("room creation", () => {
+  it("includes room access instructions in room creation responses", async () => {
     const state = new Map<string, unknown>();
     const env = {
       RENDEZVOUS: {
@@ -39,10 +40,10 @@ describe("invite creation", () => {
       },
     };
 
-    const response = await app.fetch(new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: "Review the Room API." }) }), env);
+    const response = await app.fetch(new Request("https://41d.us/rooms", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: "Review the Room API." }) }), env);
     const body = (await response.json()) as {
       intro: string; next_step: string; room_id: string; invite_id?: string;
-      room: { name: string; host_id: string; max_participants: number; purpose?: { text?: string } };
+      room: { name: string; purpose: string; host_id: string; max_participants: number };
       api: { events: string; status: string; close: string };
       quickstart: Record<string, string>;
       host_id?: string; max_participants?: number; room_url: string;
@@ -50,7 +51,11 @@ describe("invite creation", () => {
     };
 
     expect(body.intro).toContain("invited by CalmPhoenix");
-    expect(body.room).toEqual({ name: "review room", host_id: "CalmPhoenix", max_participants: 7, purpose: { text: "Review the Room API." } });
+    expect(body.room).toEqual({ name: "review room", purpose: "review room", host_id: "CalmPhoenix", max_participants: 7 });
+    expect(JSON.parse(String(state.get("body")))).toMatchObject({
+      purpose: "review room",
+      firstMessage: { text: "Review the Room API." },
+    });
     expect(body.room_id).toBe("Review-Room-");
     expect(body.invite_id).toBeUndefined();
     expect(body.host_id).toBeUndefined();
@@ -73,28 +78,63 @@ describe("invite creation", () => {
   });
 });
 
-describe("invite TTL", () => {
-  async function postInvite(body: Record<string, unknown>): Promise<{ initBody: { expiresAt: number }; inviteExpiresAt: string }> {
-    const captured: { body?: string } = {};
-    const env = {
-      RENDEZVOUS: {
-        idFromName: (name: string) => name,
-        get: () => ({
-          fetch: async (_url: string, init?: RequestInit) => {
-            if (init?.body) captured.body = init.body as string;
-            return new Response(JSON.stringify({ ok: true }), { status: 200 });
-          },
-        }),
-      },
-    };
-    const response = await app.fetch(
-      new Request("https://41d.us/invites", { method: "POST", body: JSON.stringify(body) }),
-      env,
-    );
-    const inviteJson = (await response.json()) as { expires_at: string };
-    return { initBody: JSON.parse(captured.body ?? "{}"), inviteExpiresAt: inviteJson.expires_at };
-  }
+async function postRoom(body: Record<string, unknown>, path = "/rooms"): Promise<{ initBody: Record<string, any>; response: Record<string, any> }> {
+  const captured: { body?: string } = {};
+  const env = {
+    RENDEZVOUS: {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: async (_url: string, init?: RequestInit) => {
+          if (init?.body) captured.body = init.body as string;
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        },
+      }),
+    },
+  };
+  const response = await app.fetch(new Request(`https://41d.us${path}`, { method: "POST", body: JSON.stringify(body) }), env);
+  return { initBody: JSON.parse(captured.body ?? "{}"), response: await response.json() };
+}
 
+describe("purpose vs first_message separation", () => {
+  it("stores purpose and first_message as independent fields", async () => {
+    const { initBody, response } = await postRoom({
+      host_id: "h",
+      room_name: "review room",
+      purpose: "Public: docs review",
+      first_message: { text: "Internal kickoff", workflow: "claim a task" },
+    });
+
+    expect(initBody.purpose).toBe("Public: docs review");
+    expect(initBody.firstMessage).toEqual({ text: "Internal kickoff", workflow: "claim a task" });
+    expect(response.room.purpose).toBe("Public: docs review");
+  });
+
+  it("defaults purpose to roomName when omitted, blank, or whitespace", async () => {
+    for (const purposeValue of [undefined, "", "   "]) {
+      const body: Record<string, unknown> = { host_id: "h", room_name: "fallback room" };
+      if (purposeValue !== undefined) body.purpose = purposeValue;
+      const { initBody, response } = await postRoom(body);
+      expect(initBody.purpose).toBe("fallback room");
+      expect(response.room.purpose).toBe("fallback room");
+    }
+  });
+
+  it("synthesizes a default first_message text from the purpose when first_message is omitted", async () => {
+    const { initBody } = await postRoom({ host_id: "h", room_name: "n", purpose: "Audit the SDK" });
+    expect(initBody.firstMessage).toEqual({ text: "Room purpose: Audit the SDK" });
+  });
+
+  it("accepts POST /invites as a backward-compat alias for /rooms", async () => {
+    const { initBody, response } = await postRoom(
+      { host_id: "h", room_name: "legacy", purpose: "Legacy entry" },
+      "/invites",
+    );
+    expect(initBody.purpose).toBe("Legacy entry");
+    expect(response.room.purpose).toBe("Legacy entry");
+  });
+});
+
+describe("invitation TTL", () => {
   function expectExpiresNear(actual: number, expected: number) {
     expect(actual).toBeGreaterThanOrEqual(expected - 1000);
     expect(actual).toBeLessThanOrEqual(expected + 1000);
@@ -102,32 +142,32 @@ describe("invite TTL", () => {
 
   it("uses the default TTL when invite_ttl_ms is omitted", async () => {
     const before = Date.now();
-    const { initBody } = await postInvite({ host_id: "h" });
+    const { initBody } = await postRoom({ host_id: "h" });
     expectExpiresNear(initBody.expiresAt, before + INVITE_TTL_MS);
   });
 
   it("respects a custom invite_ttl_ms within bounds", async () => {
     const before = Date.now();
     const custom = 15 * 60 * 1000;
-    const { initBody } = await postInvite({ host_id: "h", invite_ttl_ms: custom });
+    const { initBody } = await postRoom({ host_id: "h", invite_ttl_ms: custom });
     expectExpiresNear(initBody.expiresAt, before + custom);
   });
 
   it("clamps invite_ttl_ms below the minimum", async () => {
     const before = Date.now();
-    const { initBody } = await postInvite({ host_id: "h", invite_ttl_ms: 1000 });
+    const { initBody } = await postRoom({ host_id: "h", invite_ttl_ms: 1000 });
     expectExpiresNear(initBody.expiresAt, before + MIN_INVITE_TTL_MS);
   });
 
   it("clamps invite_ttl_ms above the maximum", async () => {
     const before = Date.now();
-    const { initBody } = await postInvite({ host_id: "h", invite_ttl_ms: 99 * MAX_INVITE_TTL_MS });
+    const { initBody } = await postRoom({ host_id: "h", invite_ttl_ms: 99 * MAX_INVITE_TTL_MS });
     expectExpiresNear(initBody.expiresAt, before + MAX_INVITE_TTL_MS);
   });
 
   it("falls back to the default for non-finite invite_ttl_ms values", async () => {
     const before = Date.now();
-    const { initBody } = await postInvite({ host_id: "h", invite_ttl_ms: "five minutes" });
+    const { initBody } = await postRoom({ host_id: "h", invite_ttl_ms: "five minutes" });
     expectExpiresNear(initBody.expiresAt, before + INVITE_TTL_MS);
   });
 });

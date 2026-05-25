@@ -1,7 +1,7 @@
 /**
  * Full-stack HTTP integration tests.
  *
- * These test the Hono app end-to-end: POST /invites → PUT /r/:id/participants/:pid
+ * These test the Hono app end-to-end: POST /rooms → PUT /r/:id/participants/:pid
  * → POST /r/:id → GET /r/:id, through the real Hono router with a mocked
  * DurableObjectNamespace that creates real RendezvousSession instances.
  */
@@ -62,7 +62,7 @@ const env = { RENDEZVOUS: mockDurableObjectNamespace() };
 describe("HTTP integration", () => {
   it("creates an invite and gets a room URL", async () => {
     const res = await app.fetch(
-      new Request("https://41d.us/invites", {
+      new Request("https://41d.us/rooms", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -80,6 +80,7 @@ describe("HTTP integration", () => {
     expect(body.join_secret).toBeDefined();
     expect(body.room.host_id).toBe("agent-a");
     expect(body.room.name).toBe("integration-test");
+    expect(body.room.purpose).toBe("Integration test room");
     expect(body.room.max_participants).toBe(4);
     expect(body.skill).toBe("https://41d.us/skill/SKILL.md");
   });
@@ -87,7 +88,7 @@ describe("HTTP integration", () => {
   it("joins a room, sends and reads messages", async () => {
     // Create invite
     const inviteRes = await app.fetch(
-      new Request("https://41d.us/invites", {
+      new Request("https://41d.us/rooms", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ host_id: "agent-a", room_name: "chat-room", max_participants: 4 }),
@@ -175,7 +176,7 @@ describe("HTTP integration", () => {
 
   it("rejects bad auth on room operations", async () => {
     const inviteRes = await app.fetch(
-      new Request("https://41d.us/invites", {
+      new Request("https://41d.us/rooms", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ host_id: "host", room_name: "secure-room", max_participants: 4 }),
@@ -198,7 +199,7 @@ describe("HTTP integration", () => {
 
   it("returns room status and participant list", async () => {
     const inviteRes = await app.fetch(
-      new Request("https://41d.us/invites", {
+      new Request("https://41d.us/rooms", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ host_id: "host", room_name: "status-test", max_participants: 4 }),
@@ -277,7 +278,7 @@ describe("HTTP integration", () => {
 
   it("returns invite instructions when visiting room URL without auth", async () => {
     const inviteRes = await app.fetch(
-      new Request("https://41d.us/invites", {
+      new Request("https://41d.us/rooms", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ host_id: "host", room_name: "instr-room", max_participants: 4 }),

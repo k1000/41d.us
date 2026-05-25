@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInvite, joinRoom, resumeRoom, type Invite } from "@41d/sdk";
+import { createRoom, createRoomAndJoin, joinRoom, resumeRoom, type Invite } from "@41d/sdk";
 
 async function withFetch<T>(impl: typeof globalThis.fetch, fn: () => Promise<T>): Promise<T> {
   const original = globalThis.fetch;
@@ -12,7 +12,7 @@ describe("SDK HTTP client", () => {
     intro: "intro",
     next_step: "join",
     room_id: "invite",
-    room: { name: "room", host_id: "host", max_participants: 2 },
+    room: { name: "room", purpose: "room purpose", host_id: "host", max_participants: 2 },
     join_secret: "secret",
     room_url: "https://41d.us/r/invite",
     api: {
@@ -33,13 +33,15 @@ describe("SDK HTTP client", () => {
     expires_at: new Date(Date.now() + 60_000).toISOString(),
   });
 
-  it("creates invites with normalized request keys", async () => {
+  it("creates rooms with normalized request keys", async () => {
     let requestBody: unknown;
-    const impl = (async (_url: string | URL | Request, init?: RequestInit) => {
+    let requestUrl = "";
+    const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+      requestUrl = String(url);
       requestBody = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({
         intro: "intro", next_step: "join", room_id: "invite",
-        room: { name: "room", host_id: "host", max_participants: 2 },
+        room: { name: "room", purpose: "room purpose", host_id: "host", max_participants: 2 },
         join_secret: "secret", room_url: "https://41d.us/r/invite",
         api: {}, skill: "https://41d.us/skill/SKILL.md",
         expires_at: new Date(Date.now() + 60_000).toISOString(),
@@ -47,9 +49,10 @@ describe("SDK HTTP client", () => {
     }) as typeof fetch;
 
     await withFetch(impl, () =>
-      createInvite("https://41d.us/", { roomId: "room-1", hostId: "agent-a", roomName: "room", maxParticipants: 3, purpose: "test" }),
+      createRoom("https://41d.us/", { roomId: "room-1", hostId: "agent-a", roomName: "room", maxParticipants: 3, purpose: "test" }),
     );
 
+    expect(requestUrl).toBe("https://41d.us/rooms");
     expect(requestBody).toMatchObject({ room_id: "room-1", host_id: "agent-a", room_name: "room", max_participants: 3, purpose: "test" });
   });
 
@@ -58,15 +61,41 @@ describe("SDK HTTP client", () => {
     const impl = (async (_url: string | URL | Request, init?: RequestInit) => {
       requestBody = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({
-        intro: "i", next_step: "j", room_id: "r", room: { name: "n", host_id: "h", max_participants: 2 },
+        intro: "i", next_step: "j", room_id: "r", room: { name: "n", purpose: "p", host_id: "h", max_participants: 2 },
         join_secret: "s", room_url: "u", api: {}, skill: "k", expires_at: new Date().toISOString(),
       }), { headers: { "content-type": "application/json" } });
     }) as typeof fetch;
 
     const ttl = 30 * 60_000;
-    await withFetch(impl, () => createInvite("https://41d.us/", { hostId: "h", inviteTtlMs: ttl }));
+    await withFetch(impl, () => createRoom("https://41d.us/", { hostId: "h", inviteTtlMs: ttl }));
 
     expect(requestBody.invite_ttl_ms).toBe(ttl);
+  });
+
+  it("createRoomAndJoin creates the room, joins the host, and announces the host key", async () => {
+    const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+    const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      requests.push({ url: String(url), method, body });
+      if (String(url).endsWith("/rooms")) {
+        return new Response(JSON.stringify({
+          intro: "intro", next_step: "join", room_id: "invite",
+          room: { name: "room", purpose: "room purpose", host_id: "host-a", max_participants: 2 },
+          join_secret: "secret", room_url: "https://41d.us/r/invite",
+          api: {}, skill: "https://41d.us/skill/SKILL.md",
+          expires_at: new Date(Date.now() + 60_000).toISOString(),
+        }), { headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ ok: true, cursor: 0 }), { headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+
+    await withFetch(impl, () => createRoomAndJoin("https://41d.us/", { hostId: "host-a", roomName: "room" }));
+
+    expect(requests[0]).toMatchObject({ url: "https://41d.us/rooms", method: "POST" });
+    expect(requests[1]).toMatchObject({ url: "https://41d.us/r/invite/participants/host-a", method: "PUT" });
+    const announce = requests.find((r) => r.method === "POST" && (r.body as { intent?: string })?.intent === "key.exchange");
+    expect(announce).toBeDefined();
   });
 
   it("joinRoom announces the ECDH key after joining", async () => {

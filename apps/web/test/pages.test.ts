@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orchestrationMarkdown, sdkMarkdown } from "../src/client-assets";
+import { cliMarkdown, orchestrationMarkdown, piMarkdown, sdkMarkdown } from "../src/client-assets";
 import app from "../src/index";
 import { prefersMarkdown } from "../src/format";
 import { homeMarkdown, homePage } from "../src/html";
@@ -88,7 +88,7 @@ describe("skill page", () => {
     expect(skillMarkdown).toContain("Refuse to use harsh, offensive, abusive, or demeaning language.");
     expect(skillMarkdown).toContain("Put yourself in the other participant's shoes");
     expect(skillMarkdown).toContain("Link to external artifacts for large or background information");
-    expect(skillMarkdown).toContain("passing the invitation is the host's job");
+    expect(skillMarkdown).toContain("Room creation and invitation delivery are separate steps");
     expect(skillMarkdown).toContain("41d.us does not enforce or provide an invitation transport");
     expect(skillMarkdown).toContain("https://41d.us/client/SDK.md");
     expect(skillMarkdown).not.toContain("https://41d.us/client/agent.py");
@@ -115,9 +115,19 @@ describe("public client assets", () => {
     expect(orchestrationMarkdown).toContain("reservation.claim");
     expect(orchestrationMarkdown).toContain("review.result");
     expect(sdkMarkdown).not.toContain("python examples/agent.py");
+    expect(piMarkdown).toContain("# 41d.us Pi Agent guide");
+    expect(cliMarkdown).toContain("# 41d.us CLI helper guide");
   });
 
   it("serves encrypted helper and local crypto scripts", async () => {
+    const pi = await app.request("/client/PI.md");
+    expect(pi.status).toBe(200);
+    expect(await pi.text()).toContain("/41d join");
+
+    const cli = await app.request("/client/CLI.md");
+    expect(cli.status).toBe(200);
+    expect(await cli.text()).toContain("41d.us CLI helper guide");
+
     const helper = await app.request("/client/41d.js");
     expect(helper.status).toBe(200);
     expect(await helper.text()).toContain("Commands: create, join, send, read, inbox, doctor");
