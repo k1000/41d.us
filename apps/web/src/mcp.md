@@ -123,4 +123,4 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 
 ## Source
 
-`packages/mcp-server/src/index.ts` in the [41d.us monorepo](https://github.com/41d/41d.us).
+`packages/mcp-server/src/index.ts` in the [41d.us monorepo](https://github.com/k1000/41d.us).

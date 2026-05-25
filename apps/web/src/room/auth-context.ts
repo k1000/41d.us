@@ -40,27 +40,59 @@ export interface AuthSuccess {
 
 export type AuthResult = AuthSuccess | Response;
 
-/** Validate bearer token only (for read-only endpoints). */
-export async function authenticate(invite: InviteState, parsed: ParsedRequest): Promise<Response | undefined> {
+/**
+ * Validate bearer token and resolve the participant ID.
+ *
+ * - Per-participant token: resolves to the bound participant ID.
+ * - Room-level join_secret: returns undefined (x-participant-id header is required).
+ */
+export async function authenticate(invite: InviteState, parsed: ParsedRequest): Promise<{ resolvedParticipantId?: string } | Response> {
   if (!parsed.token) return json({ error: "authorization token is required" }, 401);
-  const hash = await hashJoinSecret(invite.roomId, parsed.token);
-  if (hash !== invite.secretHash) return json({ error: "invalid authorization token" }, 403);
-  return undefined;
+
+  // Try room-level join_secret first
+  const roomHash = await hashJoinSecret(invite.roomId, parsed.token);
+  if (roomHash === invite.secretHash) return {};
+
+  // Try per-participant tokens via O(1) tokenIndex lookup
+  if (invite.tokenIndex) {
+    const pid = invite.tokenIndex[roomHash];
+    if (pid) {
+      const participant = invite.participants[pid];
+      if (participant?.tokenHash) {
+        // Verify the token is bound to this participant (double-check)
+        const expectedHash = await hashJoinSecret(invite.roomId + "." + pid, parsed.token);
+        if (expectedHash === participant.tokenHash) {
+          return { resolvedParticipantId: pid };
+        }
+      }
+    }
+  }
+
+  return json({ error: "invalid authorization token" }, 403);
 }
 
 /**
- * Validate bearer token + extract participant ID.
- * Falls back to `fallbackId` when the x-participant-id header is absent.
- * This preserves the original behavior where DELETE/PATCH on /participants/:id
- * uses the path ID as the actor when no explicit header is sent.
+ * Validate bearer token + resolve participant ID.
+ *
+ * Resolution order:
+ * 1. If the token is a per-participant token, use its bound participant ID.
+ * 2. If x-participant-id header is present, use it (for room-level join_secret).
+ * 3. If fallbackId is provided (from URL path), use it.
  */
 export async function authenticateParticipant(
   invite: InviteState,
   parsed: ParsedRequest,
   fallbackId?: string,
 ): Promise<AuthResult> {
-  const tokenErr = await authenticate(invite, parsed);
-  if (tokenErr) return tokenErr;
+  const tokenResult = await authenticate(invite, parsed);
+  if (tokenResult instanceof Response) return tokenResult;
+
+  // Per-participant token already resolves the participant ID
+  if (tokenResult.resolvedParticipantId) {
+    return { ok: true, body: parsed.body, participantId: tokenResult.resolvedParticipantId };
+  }
+
+  // Room-level secret: need x-participant-id or fallback
   const raw = parsed.participantId ?? fallbackId ?? null;
   const pidResult = normalizeParticipantId(raw);
   if (pidResult instanceof Response) return pidResult;
@@ -86,8 +118,8 @@ export async function tokenAuthThen(
   fn: () => Promise<Response>,
 ): Promise<Response> {
   const parsed = await parseRequest(request);
-  const err = await authenticate(invite, parsed);
-  if (err) return err;
+  const result = await authenticate(invite, parsed);
+  if (result instanceof Response) return result;
   return fn();
 }
 

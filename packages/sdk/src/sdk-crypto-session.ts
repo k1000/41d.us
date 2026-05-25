@@ -18,8 +18,9 @@ import {
 import type { EncryptedBody } from "./crypto";
 import type { Recipient, RoomMessage } from "./types";
 
-interface SdkCryptoSession {
+export interface SdkCryptoSession {
   announceKeyBody(): Promise<{ public_key: string }>;
+  processPeerKeys(peers: Array<{ id: string; public_key: string }>): Promise<void>;
   processKeyExchange(messages: RoomMessage[]): Promise<void>;
   encryptForSend(plainBody: unknown, to: Recipient): Promise<EncryptedBody>;
   decryptMessageBody(msg: RoomMessage): Promise<unknown>;
@@ -74,6 +75,14 @@ export async function createSdkCryptoSession(participantId: string): Promise<Sdk
     async announceKeyBody() {
       peerKeys.set(participantId, keyPair.publicKey);
       return { public_key: await exportPublicKey(keyPair.publicKey) };
+    },
+
+    async processPeerKeys(peers) {
+      for (const { id, public_key } of peers) {
+        if (id === participantId || peerKeys.has(id)) continue;
+        if (!public_key) continue;
+        peerKeys.set(id, await importPublicKey(public_key));
+      }
     },
 
     async processKeyExchange(messages) {

@@ -37,24 +37,29 @@ const keyFile = '.41d-' + new URL(roomUrl).pathname.replace(/[^a-zA-Z0-9_-]/g, '
 
 function die(message) { console.error(message); process.exit(1); }
 async function resolveRoomArgs(args) {
-  const command = args[0];
-  const envReady = process.env.ROOM_URL && process.env.JOIN_SECRET && process.env.ME;
-  const envShape = (command === 'send' && args.length <= 3) || ((command === 'join' || command === 'read' || command === 'inbox' || command === 'doctor') && args.length === 1);
-  if (envReady && envShape) return { roomUrl: process.env.ROOM_URL, joinSecret: process.env.JOIN_SECRET, me: process.env.ME, rest: args.slice(1) };
-  if (args[1] && /^https?:/.test(args[1])) return { roomUrl: args[1], joinSecret: args[2], me: args[3], rest: args.slice(4) };
-  if (args[1]) {
-    const invite = await loadInvite(args[1]);
-    return { roomUrl: invite.room_url, joinSecret: invite.join_secret, me: args[2], rest: args.slice(3) };
-  }
-  return { roomUrl: process.env.ROOM_URL, joinSecret: process.env.JOIN_SECRET, me: process.env.ME, rest: args.slice(1) };
+  if (usesEnvRoom(args)) return envRoomArgs(args);
+  if (isRoomUrl(args[1])) return urlRoomArgs(args);
+  if (args[1]) return inviteRoomArgs(args);
+  return envRoomArgs(args);
+}
+function usesEnvRoom(args) { return hasEnvRoom() && isEnvShape(args[0], args.length); }
+function hasEnvRoom() { return process.env.ROOM_URL && process.env.JOIN_SECRET && process.env.ME; }
+function isEnvShape(command, argc) { return (command === 'send' && argc <= 3) || (['join', 'read', 'inbox', 'doctor'].includes(command) && argc === 1); }
+function isRoomUrl(value) { return value && /^https?:/.test(value); }
+function envRoomArgs(args) { return { roomUrl: process.env.ROOM_URL, joinSecret: process.env.JOIN_SECRET, me: process.env.ME, rest: args.slice(1) }; }
+function urlRoomArgs(args) { return { roomUrl: args[1], joinSecret: args[2], me: args[3], rest: args.slice(4) }; }
+async function inviteRoomArgs(args) {
+  const invite = await loadInvite(args[1]);
+  return { roomUrl: invite.room_url, joinSecret: invite.join_secret, me: args[2], rest: args.slice(3) };
 }
 async function loadInvite(ref) {
-  const text = ref.trim().startsWith('{') ? ref : await fs.readFile(ref, 'utf8');
-  const invite = JSON.parse(text);
-  const roomUrl = invite.access || invite.follow || invite.room_url;
+  const invite = JSON.parse(await inviteText(ref));
+  const roomUrl = inviteUrl(invite);
   if (!roomUrl || !invite.join_secret) die('invite must include access (or room_url) and join_secret');
   return { ...invite, room_url: roomUrl };
 }
+async function inviteText(ref) { return ref.trim().startsWith('{') ? ref : fs.readFile(ref, 'utf8'); }
+function inviteUrl(invite) { return invite.access || invite.follow || invite.room_url; }
 function b64u(bytes) { return Buffer.from(bytes).toString('base64').replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); }
 function unb64u(value) { return new Uint8Array(Buffer.from(value.replaceAll('-', '+').replaceAll('_', '/'), 'base64')); }
 async function aesEncrypt(key, text) { const iv = crypto.getRandomValues(new Uint8Array(12)); const ciphertext = await subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(text)); return { ciphertext: b64u(new Uint8Array(ciphertext)), iv: b64u(iv) }; }
@@ -78,37 +83,93 @@ async function loadState() {
 async function saveState(state) { await fs.writeFile(keyFile, JSON.stringify({ privateJwk: state.privateJwk, publicJwk: state.publicJwk, peers: state.peers }, null, 2)); }
 async function requestJson(url, init = {}) { const r = await fetch(url, init); const text = await r.text(); let body; try { body = text ? JSON.parse(text) : {}; } catch { body = text; } return { ok: r.ok, status: r.status, body }; }
 async function announce(state) { return post({ to: 'all', intent: 'key.exchange', body: { public_key: await exportPublic(state.keyPair.publicKey) } }); }
-async function post(payload) { const r = await requestJson(roomUrl, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(payload) }); if (!r.ok) die(typeof r.body === 'string' ? r.body : JSON.stringify(r.body, null, 2)); return r.body; }
-async function syncKeys(state) { const r = await requestJson(roomUrl + '/?view=all&include_self=true', { headers }); if (!r.ok) die(typeof r.body === 'string' ? r.body : JSON.stringify(r.body, null, 2)); const messages = r.body.messages || []; for (const m of messages) if (m.intent === 'key.exchange' && m.from !== me && m.body?.public_key) state.peers[m.from] = m.body.public_key; await saveState(state); return messages; }
+async function post(payload) { const r = await requestJson(roomUrl, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(payload) }); if (!r.ok) die(formatErrorBody(r.body)); return r.body; }
+async function syncKeys(state) {
+  const messages = await readAllMessages();
+  rememberPeerKeys(state, messages);
+  await saveState(state);
+  return messages;
+}
+async function readAllMessages() {
+  const r = await requestJson(roomUrl + '/?view=all&include_self=true', { headers });
+  if (!r.ok) die(formatErrorBody(r.body));
+  return r.body.messages || [];
+}
+function rememberPeerKeys(state, messages) {
+  for (const m of messages.filter(isPeerKeyExchange)) state.peers[m.from] = m.body.public_key;
+}
+function isPeerKeyExchange(m) { return m.intent === 'key.exchange' && m.from !== me && m.body?.public_key; }
+function formatErrorBody(body) { return typeof body === 'string' ? body : JSON.stringify(body, null, 2); }
 async function shared(state, id) { const raw = id === me ? await exportPublic(state.keyPair.publicKey) : state.peers[id]; if (!raw) die('no public key for ' + id + '; ask them to join/announce, then run read or send again'); return derive(state.keyPair.privateKey, await importPublic(raw)); }
 async function wrapKey(messageKey, sharedKey) { const raw = await subtle.exportKey('raw', messageKey); const iv = crypto.getRandomValues(new Uint8Array(12)); const encrypted = await subtle.encrypt({ name: 'AES-GCM', iv }, sharedKey, raw); return { encrypted_key: b64u(new Uint8Array(encrypted)), iv: b64u(iv) }; }
 async function encryptBody(state, recipient, body) {
+  const recipients = recipientIds(recipient, state);
   const plaintext = JSON.stringify(body);
-  const recipients = recipient === 'all' ? Object.keys(state.peers) : [recipient];
-  if (recipients.length === 1 && recipients[0] !== me) return { encrypted: true, ...await aesEncrypt(await shared(state, recipients[0]), plaintext) };
+  if (canUseDirectEncryption(recipients)) return directEncryptedBody(state, recipients[0], plaintext);
+  return groupEncryptedBody(state, recipients, plaintext);
+}
+function recipientIds(recipient, state) { return recipient === 'all' ? Object.keys(state.peers) : [recipient]; }
+function canUseDirectEncryption(recipients) { return recipients.length === 1 && recipients[0] !== me; }
+async function directEncryptedBody(state, recipient, plaintext) { return { encrypted: true, ...await aesEncrypt(await shared(state, recipient), plaintext) }; }
+async function groupEncryptedBody(state, recipients, plaintext) {
   const messageKey = await subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
   const encrypted = await aesEncrypt(messageKey, plaintext);
+  return { encrypted: true, ...encrypted, keys: await wrappedKeys(state, recipients, messageKey) };
+}
+async function wrappedKeys(state, recipients, messageKey) {
   const keys = {};
   for (const id of new Set([...recipients, me])) keys[id] = await wrapKey(messageKey, await shared(state, id));
-  return { encrypted: true, ...encrypted, keys };
+  return keys;
 }
 async function decryptBody(state, msg) {
   const b = msg.body;
   if (!b?.encrypted) return b;
-  try {
-    if (b.keys?.[me]) {
-      const keyRaw = await aesDecryptBytes(await shared(state, msg.from), b.keys[me].encrypted_key, b.keys[me].iv);
-      const key = await subtle.importKey('raw', keyRaw, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
-      return JSON.parse(await aesDecrypt(key, b.ciphertext, b.iv));
-    }
-    return JSON.parse(await aesDecrypt(await shared(state, msg.from), b.ciphertext, b.iv));
-  } catch { return b; }
+  try { return JSON.parse(await decryptEncryptedBody(state, msg)); }
+  catch { return b; }
+}
+async function decryptEncryptedBody(state, msg) {
+  const b = msg.body;
+  if (!b.keys?.[me]) return aesDecrypt(await shared(state, msg.from), b.ciphertext, b.iv);
+  const key = await unwrapMessageKey(state, msg.from, b.keys[me]);
+  return aesDecrypt(key, b.ciphertext, b.iv);
+}
+async function unwrapMessageKey(state, from, wrapped) {
+  const keyRaw = await aesDecryptBytes(await shared(state, from), wrapped.encrypted_key, wrapped.iv);
+  return subtle.importKey('raw', keyRaw, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
 }
 async function joined() {
   const r = await requestJson(roomUrl + '/participants', { headers: { authorization: 'Bearer ' + joinSecret } });
   if (!r.ok) return { ok: false, status: r.status, participants: [] };
   const participants = r.body.participants || [];
   return { ok: participants.some((p) => p.id === me), status: r.status, participants };
+}
+async function doctorMessages(state, joinedOk) {
+  if (!joinedOk) return [];
+  await announce(state).catch(() => undefined);
+  return syncKeys(state);
+}
+async function encryptedStats(state, messages) {
+  const stats = { encrypted: 0, decryptable: 0 };
+  for (const m of messages.filter((msg) => msg.body?.encrypted)) {
+    stats.encrypted++;
+    const decrypted = await decryptBody(state, m);
+    if (!decrypted?.encrypted) stats.decryptable++;
+  }
+  return stats;
+}
+function doctorReport(state, joinedResult, messages, stats) {
+  return {
+    ok: joinedResult.ok,
+    participant_id: me,
+    joined: joinedResult.ok,
+    key_file: keyFile,
+    local_key_created: state.created,
+    key_announced: messages.some((m) => m.from === me && m.intent === 'key.exchange'),
+    known_peers: Object.keys(state.peers),
+    encrypted_messages_seen: stats.encrypted,
+    encrypted_messages_decryptable: stats.decryptable,
+    key_note: 'Reuse this key file from the same directory to retain your ECDH keypair across sessions: ' + keyFile,
+  };
 }
 
 /**
@@ -117,7 +178,7 @@ async function joined() {
 const COMMANDS = {
   async join(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
     const r = await requestJson(roomUrl + '/participants/' + encodeURIComponent(me), { method: 'PUT', headers: { authorization: 'Bearer ' + joinSecret, 'content-type': 'application/json' }, body: JSON.stringify({ state: 'free', status: 'joined with encrypted tiny client' }) });
-    if (!r.ok && r.status !== 409) die(typeof r.body === 'string' ? r.body : JSON.stringify(r.body, null, 2));
+    if (!r.ok && r.status !== 409) die(formatErrorBody(r.body));
     await announce(state);
     console.log(JSON.stringify({ ok: true, participant_id: me, key_file: keyFile, joined: r.status !== 409, key_warning: 'Save this key file to decrypt messages in future sessions: ' + keyFile }, null, 2));
   },
@@ -136,16 +197,9 @@ const COMMANDS = {
   },
   async doctor(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
     const j = await joined();
-    let messages = [];
-    let decryptable = 0;
-    let encrypted = 0;
-    if (j.ok) {
-      await announce(state).catch(() => undefined);
-      messages = await syncKeys(state);
-      for (const m of messages) if (m.body?.encrypted) { encrypted++; const d = await decryptBody(state, m); if (!d?.encrypted) decryptable++; }
-    }
-    const keyAnnounced = messages.some((m) => m.from === me && m.intent === 'key.exchange');
-    console.log(JSON.stringify({ ok: j.ok, participant_id: me, joined: j.ok, key_file: keyFile, local_key_created: state.created, key_announced: keyAnnounced, known_peers: Object.keys(state.peers), encrypted_messages_seen: encrypted, encrypted_messages_decryptable: decryptable, key_note: 'Reuse this key file from the same directory to retain your ECDH keypair across sessions: ' + keyFile }, null, 2));
+    const messages = await doctorMessages(state, j.ok);
+    const stats = await encryptedStats(state, messages);
+    console.log(JSON.stringify(doctorReport(state, j, messages, stats), null, 2));
   },
 };
 

@@ -11,6 +11,7 @@ import { securityPage } from "./security";
 import { skillExampleMarkdown, skillMarkdown } from "@41d/skill";
 import { skillExamplePage, skillPage } from "./skill-pages";
 import { handleCreateRoom } from "./invite";
+import { handleMcpRequest } from "./mcp-handler";
 import type { Env } from "./types";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -111,6 +112,19 @@ app.get("/skill/SKILL.md", (c) =>
 
 app.post("/rooms", handleCreateRoom);
 app.post("/invites", handleCreateRoom);
+
+// Hosted MCP endpoint — POST for MCP calls, GET for documentation.
+app.post("/mcp", (c) => handleMcpRequest(c.req.raw, c.env));
+app.get("/mcp", (c) => c.json({
+  name: "41d.us MCP endpoint",
+  version: "0.1.0",
+  protocol: "MCP Streamable HTTP",
+  usage: "Send POST requests with JSON-RPC 2.0 bodies",
+  docs: "https://41d.us/client/MCP.md",
+  configure: {
+    mcpServers: { "41d.us": { url: "https://41d.us/mcp" } },
+  },
+}));
 
 // Both routes are needed: Hono's `*` wildcard matches sub-paths but not the
 // bare root path. The first catches the root, the second catches sub-paths.

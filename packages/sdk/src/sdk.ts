@@ -1,59 +1,14 @@
 export { RoomApiError } from "./errors";
+export { buildMinimalInvite, normalizeInvite } from "./invite";
 export { buildRoomClient } from "./room-client";
 
+import { normalizeInvite, type RoomAccess } from "./invite";
 import { buildRoomClient } from "./room-client";
+import { createSdkCryptoSession } from "./sdk-crypto-session";
 import type { Invite, RoomClient, CreateRoomOptions } from "./room-client";
 import { request } from "./transport";
 
-export type { Invite, RoomClient, CreateRoomOptions };
-
-type RoomAccess = Partial<Invite> & {
-  access?: string;
-  follow?: string;
-  join_secret?: string;
-};
-
-function buildApiLinks(roomUrl: string): Invite["api"] {
-  return {
-    join: `${roomUrl}/participants/{participant_id}`,
-    send: roomUrl,
-    read: roomUrl,
-    read_all: `${roomUrl}/?view=all`,
-    events: `${roomUrl}/events`,
-    board: `${roomUrl}/board`,
-    participants: `${roomUrl}/participants`,
-    status: `${roomUrl}/status`,
-    export: `${roomUrl}/export`,
-    leave: `${roomUrl}/participants/{participant_id}`,
-    kick: `${roomUrl}/participants/{target_id}`,
-    close: roomUrl,
-  };
-}
-
-export function buildMinimalInvite(roomUrlRaw: string, joinSecret: string): Invite {
-  const roomUrl = roomUrlRaw.replace(/\/$/, "");
-  const roomId = roomUrl.split("/").pop() ?? "";
-  const origin = new URL(roomUrl).origin;
-  return {
-    intro: "",
-    next_step: "",
-    room_id: roomId,
-    room: { name: "", purpose: "", host_id: "", max_participants: 16 },
-    join_secret: joinSecret,
-    room_url: roomUrl,
-    api: buildApiLinks(roomUrl),
-    skill: `${origin}/skill/SKILL.md`,
-    expires_at: "",
-  };
-}
-
-export function normalizeInvite(invite: RoomAccess): Invite {
-  const roomUrl = invite.room_url ?? invite.access ?? invite.follow;
-  if (!roomUrl || !invite.join_secret) throw new Error("invite must include access (or room_url) and join_secret");
-  return invite.room_id && invite.api
-    ? { ...invite, room_url: roomUrl, join_secret: invite.join_secret } as Invite
-    : buildMinimalInvite(roomUrl, invite.join_secret);
-}
+export type { Invite, RoomClient, CreateRoomOptions, RoomAccess };
 
 export async function createRoom(
   baseUrl = "https://41d.us",
@@ -63,15 +18,22 @@ export async function createRoom(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
+      template: options.template,
       room_id: options.roomId,
       host_id: options.hostId,
+      host_public_key: options.hostPublicKey,
+      host_model: options.hostModel,
       room_name: options.roomName,
       max_participants: options.maxParticipants,
       invite_ttl_ms: options.inviteTtlMs,
       purpose: options.purpose,
       first_message: options.firstMessage,
       board_schema: options.boardSchema,
+      board_acls: options.boardAcls,
       board: options.board,
+      suggested_id: options.suggestedId,
+      suggested_model: options.suggestedModel,
+      suggested_skills: options.suggestedSkills,
     }),
   });
   if (!response.ok) throw new Error(`failed to create room: ${response.status}`);
@@ -81,10 +43,26 @@ export async function createRoom(
 export async function createRoomAndJoin(
   baseUrl = "https://41d.us",
   options: CreateRoomOptions,
-  joinOptions: { model?: string; skills?: string[] } = {},
 ): Promise<RoomClient> {
-  const invite = await createRoom(baseUrl, options);
-  return joinRoom(invite, options.hostId ?? (invite.room.host_id || "agent"), joinOptions);
+  // Generate ECDH keypair so the host can auto-join during room creation.
+  const hostId = options.hostId ?? "agent";
+  const cryptoSession = await createSdkCryptoSession(hostId);
+  const publicKeyBody = await cryptoSession.announceKeyBody();
+
+  const invite = await createRoom(baseUrl, {
+    ...options,
+    hostId,
+    hostPublicKey: publicKeyBody.public_key,
+    hostModel: options.hostModel,
+  });
+
+  // If the host was auto-joined, build a RoomClient directly.
+  if (invite.host_joined && typeof invite.cursor === "number") {
+    return buildRoomClient(invite, hostId, invite.cursor, cryptoSession);
+  }
+
+  // Fallback: join after creation (backward compat).
+  return joinRoom(invite, hostId);
 }
 
 export async function joinRoom(
@@ -93,13 +71,31 @@ export async function joinRoom(
   opts: { model?: string; skills?: string[] } = {},
 ): Promise<RoomClient> {
   const invite = normalizeInvite(inviteInput);
-  const join = await request<{ ok: true; cursor: number }>(
+
+  // Generate ECDH keypair and cache self-key before joining.
+  const cryptoSession = await createSdkCryptoSession(participantId);
+  const publicKeyBody = await cryptoSession.announceKeyBody();
+
+  interface JoinResponse {
+    ok: boolean;
+    cursor: number;
+    peers?: Array<{ id: string; public_key: string }>;
+  }
+  const join = await request<JoinResponse>(
     `${invite.room_url}/participants/${encodeURIComponent(participantId)}`,
     invite,
-    { method: "PUT", body: Object.keys(opts).length ? opts : undefined },
+    {
+      method: "PUT",
+      body: { ...opts, public_key: publicKeyBody.public_key },
+    },
   );
-  const room = await buildRoomClient(invite, participantId, join.cursor);
-  await room.announceKey();
+
+  // Process peer keys from join response.
+  if (join.peers && join.peers.length > 0) {
+    await cryptoSession.processPeerKeys(join.peers);
+  }
+
+  const room = await buildRoomClient(invite, participantId, join.cursor, cryptoSession);
   return room;
 }
 

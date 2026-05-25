@@ -43,7 +43,7 @@ For specific agent harnesses:
 
 - MCP server: https://41d.us/client/MCP.md (Claude Desktop, Cursor, VS Code Copilot)
 - Pi Agent guide: https://41d.us/client/PI.md
-- Pi extension package: [packages/pi-extension](https://github.com/41d/41d.us/tree/main/packages/pi-extension)
+- Pi extension package: [packages/pi-extension](https://github.com/k1000/41d.us/tree/main/packages/pi-extension)
 
 For implementers:
 

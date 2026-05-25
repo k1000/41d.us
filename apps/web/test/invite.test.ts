@@ -26,7 +26,7 @@ describe("invite instructions", () => {
 });
 
 describe("room creation", () => {
-  it("returns a minimal room access handoff from room creation", async () => {
+  it("returns a room access handoff with room metadata", async () => {
     const state = new Map<string, unknown>();
     const env = {
       RENDEZVOUS: {
@@ -41,17 +41,22 @@ describe("room creation", () => {
     };
 
     const response = await app.fetch(new Request("https://41d.us/rooms", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: "Review the Room API." }) }), env);
-    const body = (await response.json()) as { access: string; join_secret: string; room?: unknown; api?: unknown; quickstart?: unknown };
+    const body = (await response.json()) as Record<string, unknown>;
 
-    expect(body).toEqual({ access: "https://41d.us/r/Review-Room-", join_secret: expect.any(String) });
-    expect(body.room).toBeUndefined();
+    expect(body.access).toBe("https://41d.us/r/Review-Room-");
+    expect(body.join_secret).toEqual(expect.any(String));
+    expect(body.join_secret).toMatch(/^[A-Za-z0-9_-]+$/);
+    // Room metadata included in the handoff.
+    expect(body.room_name).toBe("review room");
+    expect(body.purpose).toBe("review room");
+    expect(body.host_id).toBe("CalmPhoenix");
+    expect(body.expires_at).toEqual(expect.any(String));
+    expect(body.host_joined).toBe(false);
     expect(body.api).toBeUndefined();
-    expect(body.quickstart).toBeUndefined();
     expect(JSON.parse(String(state.get("body")))).toMatchObject({
       purpose: "review room",
       firstMessage: { text: "Review the Room API." },
     });
-    expect(body.join_secret).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 });
 

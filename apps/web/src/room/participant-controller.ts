@@ -4,12 +4,15 @@ import { parseRequest, authenticate, authenticateParticipant } from "./auth-cont
 import { joinResponse, roomInfo } from "./info";
 import { createRoomMessage } from "./messages";
 import {
+  collectPeerKeys,
   createJoinedParticipant,
+  generateParticipantToken,
   isParticipantJoined,
   parseParticipantProfile,
   validateParticipantCanJoin,
   withKickedParticipant,
   withLeftParticipant,
+  withTokenIndex,
   withUpdatedParticipant,
 } from "./participants";
 import { normalizeParticipantId } from "../validation";
@@ -24,8 +27,8 @@ export class RoomParticipantController {
 
   async join(request: Request, invite: InviteState, pathParticipantId: string): Promise<Response> {
     const parsed = await parseRequest(request);
-    const err = await authenticate(invite, parsed);
-    if (err) return err;
+    const authResult = await authenticate(invite, parsed);
+    if (authResult instanceof Response) return authResult;
 
     const participantId = normalizeParticipantId(pathParticipantId);
     if (participantId instanceof Response) return participantId;
@@ -35,8 +38,10 @@ export class RoomParticipantController {
     if (joinValidation) return joinValidation;
     const profile = parseParticipantProfile(parsed.body);
     if (profile instanceof Response) return profile;
-    participants[participantId] = createJoinedParticipant(participantId, profile);
-    const updated = { ...invite, phase: "ready", participants } satisfies InviteState;
+    const { token, hash: tokenHash, tokenOnlyHash } = await generateParticipantToken(invite.roomId, participantId);
+    participants[participantId] = createJoinedParticipant(participantId, profile, tokenHash);
+    let updated: InviteState = { ...invite, phase: "ready", participants };
+    updated = withTokenIndex(updated, tokenOnlyHash, participantId);
     const seq = updated.nextSeq + 1;
     const systemMessage = createRoomMessage(
       {
@@ -44,6 +49,7 @@ export class RoomParticipantController {
           participant_id: participantId,
           room_id: updated.roomId,
           host_id: updated.hostId,
+          public_key: profile.public_key ?? null,
           next: "Announce your encryption key (key.exchange), sync (read) to learn peer keys, then send encrypted messages.",
         },
         intent: "participant.joined",
@@ -55,7 +61,7 @@ export class RoomParticipantController {
     const messages = [...updated.messages, systemMessage];
     await this.storage.patchAndSave(updated, { nextSeq: seq, messages });
     this.events.notifyMessage(systemMessage, seq);
-    return json(joinResponse(updated, participantId, invite.nextSeq));
+    return json({ ...joinResponse(updated, participantId, invite.nextSeq, collectPeerKeys(participants)), participant_token: token });
   }
 
   async update(request: Request, invite: InviteState, participantIdFromPath: string): Promise<Response> {

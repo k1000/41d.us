@@ -1,22 +1,30 @@
 import type { InviteState } from "../types";
 
+type HandlerResult = Promise<Response>;
+type MethodHandlers = Partial<Record<string, () => HandlerResult | undefined>>;
+type PrefixRoute = {
+  prefix: string;
+  handlers: Partial<Record<string, (value: string) => HandlerResult>>;
+};
+
 interface RoomRouteHandlers {
-  read(): Promise<Response>;
-  send(): Promise<Response>;
-  close(): Promise<Response>;
-  export(): Promise<Response>;
-  extend(): Promise<Response>;
-  getBoard(): Promise<Response>;
-  patchBoard(): Promise<Response>;
-  getBoardKey(key: string): Promise<Response>;
-  setBoardKey(key: string): Promise<Response>;
-  deleteBoardKey(key: string): Promise<Response>;
-  join(participantId: string): Promise<Response>;
-  updateParticipant(participantId: string): Promise<Response>;
-  deleteParticipant(participantId: string): Promise<Response>;
-  participants(): Promise<Response>;
-  status(): Promise<Response>;
-  events(): Promise<Response>;
+  read(): HandlerResult;
+  send(): HandlerResult;
+  close(): HandlerResult;
+  export(): HandlerResult;
+  extend(): HandlerResult;
+  transition(): HandlerResult;
+  getBoard(): HandlerResult;
+  patchBoard(): HandlerResult;
+  getBoardKey(key: string): HandlerResult;
+  setBoardKey(key: string): HandlerResult;
+  deleteBoardKey(key: string): HandlerResult;
+  join(participantId: string): HandlerResult;
+  updateParticipant(participantId: string): HandlerResult;
+  deleteParticipant(participantId: string): HandlerResult;
+  participants(): HandlerResult;
+  status(): HandlerResult;
+  events(): HandlerResult;
 }
 
 /**
@@ -31,53 +39,58 @@ function roomSubpath(url: URL, roomId: string): string {
   return path;
 }
 
-export function routeRoomRequest(request: Request, url: URL, invite: InviteState, handlers: RoomRouteHandlers): Promise<Response> | undefined {
+export function routeRoomRequest(request: Request, url: URL, invite: InviteState, handlers: RoomRouteHandlers): HandlerResult | undefined {
   const subpath = roomSubpath(url, invite.roomId);
+  return routeExact(request.method, subpath, exactRoutes(request, handlers))
+    ?? routePrefixed(request.method, subpath, prefixedRoutes(handlers));
+}
 
-  if (subpath === "") {
-    if (request.method === "GET" && request.headers.has("authorization")) return handlers.read();
-    if (request.method === "POST") return handlers.send();
-    if (request.method === "DELETE") return handlers.close();
-    return undefined;
-  }
+function exactRoutes(request: Request, handlers: RoomRouteHandlers): Record<string, MethodHandlers> {
+  return {
+    "": {
+      GET: () => request.headers.has("authorization") ? handlers.read() : undefined,
+      POST: handlers.send,
+      DELETE: handlers.close,
+    },
+    "/export": { GET: handlers.export },
+    "/status": { GET: handlers.status },
+    "/events": { GET: handlers.events },
+    "/extend": { POST: handlers.extend },
+    "/transition": { POST: handlers.transition },
+    "/board": { GET: handlers.getBoard, PATCH: handlers.patchBoard },
+    "/participants": { GET: handlers.participants },
+  };
+}
 
-  // /export
-  if (subpath === "/export" && request.method === "GET") return handlers.export();
+function prefixedRoutes(handlers: RoomRouteHandlers): PrefixRoute[] {
+  return [
+    {
+      prefix: "/board/",
+      handlers: {
+        GET: handlers.getBoardKey,
+        PUT: handlers.setBoardKey,
+        DELETE: handlers.deleteBoardKey,
+      },
+    },
+    {
+      prefix: "/participants/",
+      handlers: {
+        PUT: handlers.join,
+        PATCH: handlers.updateParticipant,
+        DELETE: handlers.deleteParticipant,
+      },
+    },
+  ];
+}
 
-  // /status, /events, /extend
-  if (request.method === "GET") {
-    if (subpath === "/status") return handlers.status();
-    if (subpath === "/events") return handlers.events();
-  }
-  if (subpath === "/extend" && request.method === "POST") return handlers.extend();
+function routeExact(method: string, subpath: string, routes: Record<string, MethodHandlers>): HandlerResult | undefined {
+  return routes[subpath]?.[method]?.();
+}
 
-  // /board or /board/:key
-  if (subpath === "/board") {
-    if (request.method === "GET") return handlers.getBoard();
-    if (request.method === "PATCH") return handlers.patchBoard();
-    return undefined;
-  }
-  const boardPrefix = "/board/";
-  if (subpath.startsWith(boardPrefix)) {
-    const key = decodeURIComponent(subpath.slice(boardPrefix.length));
-    if (!key) return undefined;
-    if (request.method === "GET") return handlers.getBoardKey(key);
-    if (request.method === "PUT") return handlers.setBoardKey(key);
-    if (request.method === "DELETE") return handlers.deleteBoardKey(key);
-    return undefined;
-  }
-
-  // /participants or /participants/:id
-  if (subpath === "/participants" && request.method === "GET") return handlers.participants();
-  const participantPrefix = "/participants/";
-  if (subpath.startsWith(participantPrefix)) {
-    const participantId = decodeURIComponent(subpath.slice(participantPrefix.length));
-    if (!participantId) return undefined;
-    if (request.method === "PUT") return handlers.join(participantId);
-    if (request.method === "PATCH") return handlers.updateParticipant(participantId);
-    if (request.method === "DELETE") return handlers.deleteParticipant(participantId);
-    return undefined;
-  }
-
-  return undefined;
+function routePrefixed(method: string, subpath: string, routes: PrefixRoute[]): HandlerResult | undefined {
+  const route = routes.find((candidate) => subpath.startsWith(candidate.prefix));
+  if (!route) return undefined;
+  const value = decodeURIComponent(subpath.slice(route.prefix.length));
+  if (!value) return undefined;
+  return route.handlers[method]?.(value);
 }

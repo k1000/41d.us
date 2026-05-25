@@ -11,20 +11,18 @@ describe("homePage", () => {
   it("presents the project and the end-to-end encryption promise", () => {
     const html = homePage();
 
-    expect(html).toContain("cross-project collaboration for heterogeneous AI agents");
+    expect(html).toContain("ephemeral encrypted coordination service for AI agents");
     expect(html).toContain('href="/security"');
     expect(html).toContain('href="/security">End-to-end encryption via client-side ECDH + AES-256-GCM.</a>');
-    expect(html).toContain("agents from different projects, technologies, and skill sets");
-    expect(html).toContain("replaces insecure ad-hoc coordination");
-    expect(html).toContain("Create room and invite");
-    expect(html).toContain("Action: create room");
-    expect(html).toContain("Join room &amp; participate");
+    expect(html).toContain("Agents from any project, platform, or skill set");
+    expect(html).toContain("Rooms are temporary: no accounts, no persistent history");
+    expect(html).toContain("Quick start");
+    expect(html).toContain("Option A: MCP host");
+    expect(html).toContain("Option B: CLI helper");
     expect(html).not.toContain("If you were invited");
     expect(html).not.toContain("Trust model");
     expect(html).toContain('href="https://www.anthropic.com/claude-code" target="_blank"');
     expect(html).toContain('href="https://openai.com/codex/" target="_blank"');
-    expect(html).toContain("General agent skill: <a href=\"https://41d.us/skill/SKILL.md\">https://41d.us/skill/SKILL.md</a>");
-    expect(html).toContain("SDK / protocol reference: <a href=\"https://41d.us/client/SDK.md\">https://41d.us/client/SDK.md</a>");
     expect(html).not.toContain("Client code");
     expect(html).toContain('<h2><span class="md-marker">##</span> Features</h2>');
     expect(html).toContain(".md-marker");
@@ -54,23 +52,19 @@ describe("homePage", () => {
     expect(markdown).toContain("# 41d.us");
     expect(markdown).toContain("Free, secure cross-project collaboration for heterogeneous AI agents");
     expect(markdown).toContain("[End-to-end encryption via client-side ECDH + AES-256-GCM.](/security)");
-    expect(markdown).toContain("agents from different projects, technologies, and skill sets");
-    expect(markdown).toContain("replaces insecure ad-hoc coordination");
-    expect(markdown).toContain("## Create room and invite");
-    expect(markdown).toContain("**Action: create room**");
-    expect(markdown).toContain("`docs-review.json` is the small handoff you can send as the invitation");
+    expect(markdown).toContain("Agents from any project, platform, or skill set");
+    expect(markdown).toContain("Rooms are temporary");
+    expect(markdown).toContain("## Quick start");
+    expect(markdown).toContain("### Option A: MCP host");
     expect(markdown).toContain('"access": "https://41d.us/r/docs-review-x7k2"');
-    expect(markdown).toContain("## Join room & participate");
-    expect(markdown).toContain("./41d doctor invitation.json agent-b");
-    expect(markdown).toContain("agents only need the encrypted helper or SDK");
-    expect(markdown).toContain("Useful links:");
+    expect(markdown).toContain("### Option B: CLI helper");
+    expect(markdown).toContain("Hosted MCP endpoint");
+    expect(markdown).toContain("## Integration options");
     expect(markdown).toContain("## Features");
     expect(markdown).not.toContain("## Ground rules");
-    expect(markdown).toContain("For joining:");
-    expect(markdown).toContain("- General agent skill: https://41d.us/skill/SKILL.md");
-    expect(markdown).toContain("For specific agent harnesses:");
-    expect(markdown).toContain("For implementers:");
-    expect(markdown).toContain("- SDK / protocol reference: https://41d.us/client/SDK.md");
+    expect(markdown).toContain("[Tiny CLI helper](/client/41d.js)");
+    expect(markdown).toContain("[Hosted MCP endpoint](/client/MCP.md)");
+    expect(markdown).toContain("[TypeScript SDK](/client/SDK.md)");
     expect(markdown).not.toContain("## Client code");
     expect(markdown).not.toContain("https://41d.us/client/agent.py");
   });
@@ -87,24 +81,19 @@ describe("skill page", () => {
   it("links to the downloadable skill", () => {
     expect(skillPage()).toContain("/skill/SKILL.md");
     expect(skillMarkdown).toContain("# 41d.us Agent Rendezvous");
-    expect(skillMarkdown).toContain("collab space");
-    expect(skillMarkdown).toContain("Room creation: host setup");
-    expect(skillMarkdown).toContain("Collaboration usage: join and work in a room");
-    expect(skillMarkdown).toContain("first_message");
-    expect(skillMarkdown).toContain("https://41d.us/skill/examples/kanban-board");
-    expect(skillMarkdown).toContain("https://41d.us/skill/examples/task-list-board");
-    expect(skillMarkdown).toContain("https://41d.us/skill/examples/ownership-and-blockers");
-    expect(skillMarkdown).not.toContain("#ownership-and-blocker-board-example");
-    expect(skillMarkdown).toContain("Set yourself busy when starting work");
-    expect(skillMarkdown).toContain("Keep messages as short as possible while still meaningful.");
-    expect(skillMarkdown).toContain("Refuse to use harsh, offensive, abusive, or demeaning language.");
-    expect(skillMarkdown).toContain("Put yourself in the other participant's shoes");
-    expect(skillMarkdown).toContain("Link to external artifacts for large or background information");
-    expect(skillMarkdown).toContain("Room creation and invitation delivery are separate steps");
-    expect(skillMarkdown).toContain("41d.us does not enforce or provide an invitation transport");
-    expect(skillMarkdown).toContain("https://41d.us/client/SDK.md");
+    expect(skillMarkdown).toContain("heterogeneous agents");
+    expect(skillMarkdown).toContain("Path A: MCP host");
+    expect(skillMarkdown).toContain("Path B: Shell-capable agent");
+    expect(skillMarkdown).toContain("npm install @41d/sdk");
+    expect(skillMarkdown).toContain("kanban");
+    expect(skillMarkdown).toContain("milestone");
+    expect(skillMarkdown).toContain("quick");
+    expect(skillMarkdown).toContain("Board ACLs");
+    expect(skillMarkdown).toContain("Keep messages concise");
+    expect(skillMarkdown).toContain("reservation.claim");
+    expect(skillMarkdown).toContain("concise. Link to artifacts");
+    expect(skillMarkdown).toContain("Announce files before editing");
     expect(skillMarkdown).not.toContain("https://41d.us/client/agent.py");
-    expect(skillMarkdown).not.toContain("const invite = await createInvite");
   });
 
   it("serves dedicated board example pages", async () => {
@@ -120,11 +109,10 @@ describe("skill page", () => {
 
 describe("public client assets", () => {
   it("serves SDK docs content", () => {
-    expect(sdkMarkdown).toContain("collab space");
+    expect(sdkMarkdown).toContain("# 41d.us SDK / Client Usage");
     expect(sdkMarkdown).toContain("ORCHESTRATION.md");
-    expect(sdkMarkdown).toContain("node - doctor invitation.json agent-b");
-    expect(sdkMarkdown).toContain('"access": "https://41d.us/r/docs-review-x7k2"');
-    expect(sdkMarkdown).toContain("/client/crypto.ts");
+    expect(sdkMarkdown).toContain("createRoomAndJoin");
+    expect(sdkMarkdown).toContain("/client/41d.js");
     expect(orchestrationMarkdown).toContain("reservation.claim");
     expect(orchestrationMarkdown).toContain("review.result");
     expect(sdkMarkdown).not.toContain("python examples/agent.py");

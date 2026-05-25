@@ -1,4 +1,5 @@
 import { createSdkCryptoSession } from "./sdk-crypto-session";
+import type { SdkCryptoSession } from "./sdk-crypto-session";
 import { request } from "./transport";
 import type {
   Recipient,
@@ -13,15 +14,23 @@ import type {
 // ── Public types ────────────────────────────────────────────────
 
 export interface CreateRoomOptions {
+  template?: "quick" | "kanban" | "milestone";
   roomId?: string;
   hostId?: string;
+  hostPublicKey?: string;
+  hostModel?: string;
   roomName?: string;
   maxParticipants?: number;
   inviteTtlMs?: number;
   purpose?: string;
   firstMessage?: string | Record<string, unknown>;
   boardSchema?: Record<string, unknown>;
+  boardAcls?: Record<string, "anyone" | "host_only" | string[]>;
   board?: Record<string, unknown>;
+  /** Optional identity hints for the invited agent, included in the handoff. */
+  suggestedId?: string;
+  suggestedModel?: string;
+  suggestedSkills?: string[];
 }
 
 export interface Invite {
@@ -48,6 +57,26 @@ export interface Invite {
   };
   skill: string;
   expires_at: string;
+  /** Optional identity hints from the host, included in the handoff JSON. */
+  suggested_id?: string;
+  suggested_model?: string;
+  suggested_skills?: string[];
+  /** When true, the host was auto-joined during room creation. */
+  host_joined?: boolean;
+  /** Cursor after auto-join (only when host_joined is true). */
+  cursor?: number;
+}
+
+export interface SendOptions {
+  replyTo?: string | null;
+  intent?: string;
+  priority?: string;
+  plain?: boolean;
+  /** Optional participant status update sent alongside the message (one round trip). */
+  state?: "free" | "busy";
+  status?: string;
+  model?: string;
+  skills?: string[];
 }
 
 export interface RoomClient {
@@ -58,8 +87,8 @@ export interface RoomClient {
   send(
     to: Recipient,
     body: unknown,
-    options?: { replyTo?: string | null; intent?: string; priority?: string; plain?: boolean },
-  ): Promise<{ ok: true; id: string; seq: number }>;
+    options?: SendOptions,
+  ): Promise<{ ok: true; id: string; seq: number; participant?: Participant }>;
   read(options?: { includeSelf?: boolean; all?: boolean }): Promise<RoomMessage[]>;
   participants(): Promise<ParticipantsResponse>;
   updateStatus(state: "free" | "busy", status: string, options?: { model?: string; skills?: string[] }): Promise<{ ok: true; participant: Participant }>;
@@ -71,7 +100,29 @@ export interface RoomClient {
   leave(): Promise<void>;
   kick(targetId: string): Promise<{ ok: true; kicked: string }>;
   close(): Promise<{ ok: true; closed: boolean }>;
+  transition(event: string): Promise<{ ok: true; from: string; event: string; to: string }>;
   export(): Promise<RoomExportResponse>;
+}
+
+// ── Send payload helpers ────────────────────────────────────────
+
+function shouldEncrypt(options: SendOptions): boolean {
+  return options.intent !== "key.exchange" && options.plain !== true;
+}
+
+function buildSendPayload(to: Recipient, body: unknown, options: SendOptions): Record<string, unknown> {
+  return {
+    to,
+    body,
+    reply_to: options.replyTo ?? null,
+    intent: options.intent ?? "notify",
+    priority: options.priority ?? "normal",
+    ...Object.fromEntries(
+      (["state", "status", "model", "skills"] as const)
+        .map((k) => [k, options[k]])
+        .filter(([, v]) => v !== undefined),
+    ),
+  };
 }
 
 // ── Factory ─────────────────────────────────────────────────────
@@ -80,9 +131,10 @@ export async function buildRoomClient(
   invite: Invite,
   participantId: string,
   initialCursor: number,
+  cryptoSession?: SdkCryptoSession,
 ): Promise<RoomClient> {
   let cursor = initialCursor;
-  const cryptoSession = await createSdkCryptoSession(participantId);
+  const session = cryptoSession ?? await createSdkCryptoSession(participantId);
 
   const client: RoomClient = {
     invite,
@@ -90,7 +142,7 @@ export async function buildRoomClient(
     get cursor() { return cursor; },
 
     async announceKey() {
-      const publicKeyBody = await cryptoSession.announceKeyBody();
+      const publicKeyBody = await session.announceKeyBody();
       return request(invite.room_url, invite, {
         method: "POST",
         participantId,
@@ -99,19 +151,12 @@ export async function buildRoomClient(
     },
 
     async send(to: Recipient, body: unknown, options = {}) {
-      const isKeyExchange = options.intent === "key.exchange" || options.plain;
-      if (!isKeyExchange) await client.read({ all: true, includeSelf: true });
-      const sendBody = isKeyExchange ? body : await cryptoSession.encryptForSend(body, to);
+      if (shouldEncrypt(options)) await client.read({ all: true, includeSelf: true });
+      const sendBody = shouldEncrypt(options) ? await session.encryptForSend(body, to) : body;
       return request(invite.room_url, invite, {
         method: "POST",
         participantId,
-        body: {
-          to,
-          body: sendBody,
-          reply_to: options.replyTo ?? null,
-          intent: options.intent ?? "notify",
-          priority: options.priority ?? "normal",
-        },
+        body: buildSendPayload(to, sendBody, options),
       });
     },
 
@@ -126,10 +171,10 @@ export async function buildRoomClient(
         url.toString(), invite, { participantId },
       );
       cursor = result.cursor;
-      await cryptoSession.processKeyExchange(result.messages);
+      await session.processKeyExchange(result.messages);
       return Promise.all(
         result.messages.map((msg) =>
-          cryptoSession.decryptMessageBody(msg).then(
+          session.decryptMessageBody(msg).then(
             (body) => ({ ...msg, body } satisfies RoomMessage),
           ),
         ),
@@ -188,6 +233,13 @@ export async function buildRoomClient(
         method: "DELETE",
         participantId,
       });
+    },
+    async transition(event: string) {
+      return request<{ ok: true; from: string; event: string; to: string }>(
+        `${invite.room_url}/transition`,
+        invite,
+        { method: "POST", participantId, body: { event } },
+      );
     },
     async export() {
       return request<RoomExportResponse>(`${invite.room_url}/export`, invite, { participantId });

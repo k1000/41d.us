@@ -2,6 +2,7 @@ import { json } from "../format";
 import type { InitPayload, InviteState } from "../types";
 import { validateBoard, wrapInitialBoard } from "./board";
 import { createInitialMessage } from "./messages";
+import { createJoinedParticipant } from "./participants";
 import type { RoomStorage } from "./storage";
 
 export class RoomInitController {
@@ -28,11 +29,21 @@ export class RoomInitController {
     const board = wrapInitialBoard(body.initialBoard, body.hostId);
     const validation = validateBoard(body.boardSchema, board);
     if (validation) return validation;
-    const { initialBoard: _ib, firstMessage: _fm, ...stateToStore } = body;
+
+    // Auto-join the host when hostPublicKey is provided.
+    const participants: Record<string, import("../types").Participant> = {};
+    if (body.hostPublicKey) {
+      participants[body.hostId] = createJoinedParticipant(body.hostId, {
+        public_key: body.hostPublicKey,
+        model: body.hostModel,
+      });
+    }
+
+    const { initialBoard: _ib, firstMessage: _fm, hostPublicKey: _hpk, hostModel: _hm, ...stateToStore } = body;
     return {
       ...stateToStore,
       nextSeq: firstMessage.length,
-      participants: {},
+      participants,
       messages: firstMessage,
       board,
     } satisfies InviteState;

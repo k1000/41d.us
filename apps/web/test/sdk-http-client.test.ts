@@ -94,11 +94,12 @@ describe("SDK HTTP client", () => {
 
     expect(requests[0]).toMatchObject({ url: "https://41d.us/rooms", method: "POST" });
     expect(requests[1]).toMatchObject({ url: "https://41d.us/r/invite/participants/host-a", method: "PUT" });
-    const announce = requests.find((r) => r.method === "POST" && (r.body as { intent?: string })?.intent === "key.exchange");
-    expect(announce).toBeDefined();
+    // Key is now announced in the join PUT body, not a separate POST.
+    const joinBody = requests[1].body as Record<string, unknown>;
+    expect(joinBody.public_key).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
-  it("joinRoom announces the ECDH key after joining", async () => {
+  it("joinRoom announces the ECDH key in the join request body", async () => {
     const invite = makeInvite();
     const requests: Array<{ url: string; method: string; body?: unknown }> = [];
     const impl = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -108,9 +109,10 @@ describe("SDK HTTP client", () => {
 
     await withFetch(impl, () => joinRoom(invite, "agent-a"));
 
-    const announce = requests.find((r) => r.method === "POST" && (r.body as { intent?: string })?.intent === "key.exchange");
-    expect(announce).toBeDefined();
-    expect((announce!.body as { body: { public_key?: string } }).body.public_key).toMatch(/^[A-Za-z0-9_-]+$/);
+    // Key is now sent in the join PUT body instead of a separate POST.
+    expect(requests[0]).toMatchObject({ url: "https://41d.us/r/invite/participants/agent-a", method: "PUT" });
+    const joinBody = requests[0].body as Record<string, unknown>;
+    expect(joinBody.public_key).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
   it("sends falsy JSON bodies", async () => {
@@ -126,9 +128,9 @@ describe("SDK HTTP client", () => {
       await room.setBoardKey("enabled", false);
     });
 
-    // joinRoom emits PUT then key.exchange POST before setBoardKey lands at index 2.
-    expect(requests[2].init?.headers).toMatchObject({ "content-type": "application/json" });
-    expect(requests[2].init?.body).toBe("false");
+    // joinRoom emits PUT (with public_key) before setBoardKey lands at index 1.
+    expect(requests[1].init?.headers).toMatchObject({ "content-type": "application/json" });
+    expect(requests[1].init?.body).toBe("false");
   });
 
   it("sets view=all param when reading retained history", async () => {

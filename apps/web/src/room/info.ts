@@ -1,4 +1,4 @@
-import type { InviteState } from "../types";
+import type { InviteState, RoomStateConfig } from "../types";
 import { activeParticipants } from "./participants";
 
 export function roomInfo(invite: InviteState) {
@@ -12,7 +12,12 @@ export function roomInfo(invite: InviteState) {
   };
 }
 
-export function joinResponse(invite: InviteState, participantId: string, cursor: number) {
+export function joinResponse(
+  invite: InviteState,
+  participantId: string,
+  cursor: number,
+  peers?: Array<{ id: string; public_key: string }>,
+) {
   return {
     ok: true,
     room: roomInfo(invite),
@@ -20,6 +25,7 @@ export function joinResponse(invite: InviteState, participantId: string, cursor:
     is_host: participantId === invite.hostId,
     host_id: invite.hostId,
     cursor,
+    peers: peers ?? [],
     next: {
       announce_key: "Send a POST with intent=key.exchange and your ECDH public_key to announce your encryption key.",
       sync: "Call GET room_url (or room.read()) to learn peer keys and fetch messages. The helper/SDK does this for you.",
@@ -29,7 +35,15 @@ export function joinResponse(invite: InviteState, participantId: string, cursor:
   };
 }
 
+/** Return available transitions from the current state, if a state machine is configured. */
+export function roomTransitionInfo(stateConfig: RoomStateConfig) {
+  return {
+    available_events: Object.keys(stateConfig.transitions),
+  };
+}
+
 export function roomStatus(invite: InviteState) {
+  const currentState = invite.roomStates?.[invite.phase];
   return {
     room: roomInfo(invite),
     participants: activeParticipants(invite.participants),
@@ -37,6 +51,7 @@ export function roomStatus(invite: InviteState) {
     last_seq: invite.nextSeq,
     oldest_seq: invite.messages[0]?.seq ?? 0,
     expires_at: new Date(invite.expiresAt).toISOString(),
+    ...(currentState ? roomTransitionInfo(currentState) : {}),
   };
 }
 

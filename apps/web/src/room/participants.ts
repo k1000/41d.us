@@ -1,12 +1,14 @@
 import { json, type GuardResult } from "../format";
 import type { InviteState, Participant } from "../types";
 import { normalizeState, normalizeStatus, normalizeModel, normalizeSkills } from "../validation";
+import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
 
 interface ParticipantProfile {
   state?: "free" | "busy";
   status?: string;
   model?: string;
   skills?: string[];
+  public_key?: string;
 }
 
 export function validateParticipantCanJoin(participants: Record<string, Participant>, participantId: string, maxParticipants: number): GuardResult {
@@ -23,6 +25,13 @@ export function activeParticipants(participants: Record<string, Participant>): P
   return Object.values(participants).filter((p) => !p.left_at);
 }
 
+/** Collect public key info for all active participants with announced keys. */
+export function collectPeerKeys(participants: Record<string, Participant>): Array<{ id: string; public_key: string }> {
+  return Object.values(participants)
+    .filter((p): p is Participant & { public_key: string } => !p.left_at && !!p.public_key)
+    .map((p) => ({ id: p.id, public_key: p.public_key }));
+}
+
 export function isParticipantJoined(participants: Record<string, Participant>, participantId: string): boolean {
   const participant = participants[participantId];
   return !!participant && !participant.left_at;
@@ -37,10 +46,11 @@ export function parseParticipantProfile(body: Record<string, unknown>): Particip
   if (model instanceof Response) return model;
   const skills = normalizeSkills(body.skills);
   if (skills instanceof Response) return skills;
-  return { state, status, model, skills };
+  const public_key = typeof body.public_key === "string" ? body.public_key.slice(0, 256) : undefined;
+  return { state, status, model, skills, public_key };
 }
 
-export function createJoinedParticipant(participantId: string, profile: ParticipantProfile): Participant {
+export function createJoinedParticipant(participantId: string, profile: ParticipantProfile, tokenHash?: string): Participant {
   const now = new Date().toISOString();
   return {
     id: participantId,
@@ -52,7 +62,23 @@ export function createJoinedParticipant(participantId: string, profile: Particip
     status_updated_at: now,
     ...(profile.model ? { model: profile.model } : {}),
     ...(profile.skills ? { skills: profile.skills } : {}),
+    ...(profile.public_key ? { public_key: profile.public_key } : {}),
+    ...(tokenHash ? { tokenHash } : {}),
   };
+}
+
+/** Generate a per-participant token and return { token, hash, tokenOnlyHash }. */
+export async function generateParticipantToken(roomId: string, participantId: string): Promise<{ token: string; hash: string; tokenOnlyHash: string }> {
+  const token = randomBase64Url(32);
+  const hash = await hashJoinSecret(roomId + "." + participantId, token);
+  const tokenOnlyHash = await hashJoinSecret(roomId, token); // for O(1) index lookup
+  return { token, hash, tokenOnlyHash };
+}
+
+/** Update the tokenIndex when a participant joins with a tokenHash. */
+export function withTokenIndex(invite: InviteState, tokenOnlyHash: string | undefined, participantId: string): InviteState {
+  if (!tokenOnlyHash) return invite;
+  return { ...invite, tokenIndex: { ...(invite.tokenIndex ?? {}), [tokenOnlyHash]: participantId } };
 }
 
 function updateParticipantProfile(participant: Participant, profile: ParticipantProfile): Participant {

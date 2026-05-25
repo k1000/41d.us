@@ -13,7 +13,8 @@ import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { createRoom } from "@41d/sdk";
+import { createRoomAndJoin } from "@41d/sdk";
+import type { Invite } from "@41d/sdk";
 import { getOrCreateSession, clearRoomSessions } from "@41d/sdk/session";
 import { sessions, parseInvite, parseSkills, anonGet, jsonContent, clientFor } from "./helpers";
 export { parseInvite, parseSkills };
@@ -25,6 +26,60 @@ export function parseFirstMessage(value: string): string | Record<string, unknow
   } catch {
     return value;
   }
+}
+
+interface CreateRoomToolArgs {
+  template?: "quick" | "kanban" | "milestone";
+  hostId?: string;
+  roomName?: string;
+  maxParticipants?: number;
+  inviteTtlMinutes?: number;
+  purpose?: string;
+  firstMessage?: string;
+  board?: string;
+  boardSchema?: string;
+  boardAcls?: string;
+  suggestedId?: string;
+  suggestedModel?: string;
+  suggestedSkills?: string;
+}
+
+async function createRoomTool(args: CreateRoomToolArgs) {
+  const hostId = args.hostId ?? "agent";
+  const room = await createRoomAndJoin("https://41d.us", {
+    hostId,
+    template: args.template,
+    roomName: args.roomName,
+    maxParticipants: args.maxParticipants,
+    inviteTtlMs: args.inviteTtlMinutes ? args.inviteTtlMinutes * 60_000 : undefined,
+    purpose: args.purpose,
+    firstMessage: args.firstMessage ? parseFirstMessage(args.firstMessage) : undefined,
+    board: args.board ? JSON.parse(args.board) : undefined,
+    boardSchema: args.boardSchema ? JSON.parse(args.boardSchema) : undefined,
+    boardAcls: args.boardAcls ? JSON.parse(args.boardAcls) : undefined,
+    suggestedId: args.suggestedId,
+    suggestedModel: args.suggestedModel,
+    suggestedSkills: parseSkills(args.suggestedSkills),
+  });
+  const invite = room.invite;
+  sessions.set(`${invite.room_id}:${hostId}`, room);
+  return jsonContent({
+    ...invite,
+    host_joined: true,
+    host_key_announced: true,
+    host_cursor: room.cursor,
+    handoff: JSON.stringify(handoffFor(invite)),
+  });
+}
+
+function handoffFor(invite: Invite): Record<string, unknown> {
+  return Object.fromEntries([
+    ["access", invite.room_url],
+    ["join_secret", invite.join_secret],
+    ["suggested_id", invite.suggested_id],
+    ["suggested_model", invite.suggested_model],
+    ["suggested_skills", invite.suggested_skills],
+  ].filter(([, value]) => value !== undefined));
 }
 
 // ── Server setup ────────────────────────────────────────────────
@@ -39,6 +94,7 @@ server.registerTool(
   {
     description: "Create a new 41d.us encrypted coordination room and automatically join the host. Returns the full room response for the host; invite participants with a small handoff JSON containing access and join_secret.",
     inputSchema: {
+      template: z.enum(["quick", "kanban", "milestone"]).optional().describe("Room template (default: quick)"),
       hostId: z.string().optional().describe("Optional host identifier (default: 'agent')"),
       roomName: z.string().optional().describe("Human-readable room name"),
       maxParticipants: z.number().int().min(2).max(64).optional().describe("Max participants (default: 16)"),
@@ -47,23 +103,13 @@ server.registerTool(
       firstMessage: z.string().optional().describe("Room-internal kickoff message as JSON string or plain text; use for detailed workflow, rules, and sensitive context shared only with invitees"),
       board: z.string().optional().describe("Optional initial board state as a JSON string (e.g. '{\"tasks\":{},\"kanban\":{}}')"),
       boardSchema: z.string().optional().describe("Optional JSON Schema for board validation, as a JSON string"),
+      boardAcls: z.string().optional().describe("Optional board ACLs as a JSON string (e.g. '{\"tasks\":\"host_only\"}')"),
+      suggestedId: z.string().optional().describe("Optional suggested participant_id for the invited agent"),
+      suggestedModel: z.string().optional().describe("Optional suggested model name for the invited agent"),
+      suggestedSkills: z.string().optional().describe("Optional comma-separated suggested skills for the invited agent"),
     },
   },
-  async (args) => {
-    const hostId = args.hostId ?? "agent";
-    const invite = await createRoom("https://41d.us", {
-      hostId,
-      roomName: args.roomName,
-      maxParticipants: args.maxParticipants,
-      inviteTtlMs: args.inviteTtlMinutes ? args.inviteTtlMinutes * 60_000 : undefined,
-      purpose: args.purpose,
-      firstMessage: args.firstMessage ? parseFirstMessage(args.firstMessage) : undefined,
-      board: args.board ? JSON.parse(args.board) : undefined,
-      boardSchema: args.boardSchema ? JSON.parse(args.boardSchema) : undefined,
-    });
-    const host = await getOrCreateSession(sessions, invite, hostId);
-    return jsonContent({ ...invite, host_joined: true, host_key_announced: true, host_cursor: host.cursor });
-  },
+  createRoomTool,
 );
 
 server.registerTool(
@@ -96,7 +142,7 @@ server.registerTool(
 server.registerTool(
   "send_message",
   {
-    description: "Send an encrypted message to a 41d.us room. Bodies are automatically E2E encrypted. The session must already be joined via join_room.",
+    description: "Send an encrypted message to a 41d.us room. Bodies are automatically E2E encrypted. Optionally update your participant status in the same call.",
     inputSchema: {
       inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
       participantId: z.string().min(1).describe("Your participant ID in the room"),
@@ -104,6 +150,10 @@ server.registerTool(
       body: z.string().describe("Message body as a JSON string (e.g. '{\"text\":\"hello\"}')"),
       intent: z.string().optional().describe("Message intent (e.g. 'notify', 'task.claim', 'review.request')"),
       priority: z.enum(["low", "normal", "high", "urgent"]).optional().describe("Message priority"),
+      state: z.enum(["free", "busy"]).optional().describe("Optional participant state update alongside the message"),
+      status: z.string().optional().describe("Optional participant status text update alongside the message"),
+      model: z.string().optional().describe("Optional participant model update alongside the message"),
+      skills: z.string().optional().describe("Optional comma-separated participant skills update alongside the message"),
     },
   },
   async (args) => {
@@ -113,6 +163,10 @@ server.registerTool(
     const result = await client.send(to, JSON.parse(args.body), {
       intent: args.intent ?? "notify",
       priority: args.priority ?? "normal",
+      state: args.state,
+      status: args.status,
+      model: args.model,
+      skills: parseSkills(args.skills),
     });
     return jsonContent(result);
   },
@@ -276,6 +330,24 @@ server.registerTool(
       sessions.delete(key);
     }
     return jsonContent({ ok: true, participant_id: args.participantId, left: true });
+  },
+);
+
+server.registerTool(
+  "transition_room",
+  {
+    description: "Trigger a state machine event to transition the room. Only the host can transition.",
+    inputSchema: {
+      inviteJson: z.string().describe("Handoff JSON with access + join_secret, or the full room response JSON"),
+      participantId: z.string().min(1).describe("Your participant ID (must be the host)"),
+      event: z.string().min(1).describe("Transition event name (e.g. 'begin', 'review', 'approve')"),
+    },
+  },
+  async (args) => {
+    const invite = parseInvite(args.inviteJson);
+    const client = await clientFor(invite, args.participantId);
+    const result = await client.transition(args.event);
+    return jsonContent(result ?? { ok: true, event: args.event });
   },
 );
 

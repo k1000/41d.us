@@ -5,8 +5,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "dependencies": {
-    "@41d/sdk": "workspace:*",
     "@41d/helper": "workspace:*",
+    "@41d/sdk": "workspace:*",
     "@41d/skill": "workspace:*"
   }
 }

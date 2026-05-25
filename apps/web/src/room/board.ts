@@ -2,7 +2,7 @@ import { Validator } from "@cfworker/json-schema";
 import { MAX_BOARD_VALUE_BYTES, sanitizeId } from "../constants";
 import { json, type GuardResult } from "../format";
 import { normalizeBoardKey, MAX_BOARD_KEY_LENGTH } from "../validation";
-import type { BoardEntry, InviteState } from "../types";
+import type { BoardAclRule, BoardEntry, InviteState } from "../types";
 
 const ENCODER = new TextEncoder();
 
@@ -20,7 +20,11 @@ function makeBoardEntry(value: unknown, updatedBy: string): BoardEntry | Respons
 }
 
 export function getBoard(invite: InviteState): Response {
-  return json({ board: invite.board, board_schema: invite.boardSchema ?? null });
+  return json({
+    board: invite.board,
+    board_schema: invite.boardSchema ?? null,
+    board_acls: invite.boardAcls ?? null,
+  });
 }
 
 export function getBoardKey(invite: InviteState, keyFromPath: string): Response {
@@ -31,6 +35,33 @@ export function getBoardKey(invite: InviteState, keyFromPath: string): Response 
   return json({ key, entry });
 }
 
+/** Resolve the effective ACL rule for a board key: per-state ACL overrides room ACL. */
+function effectiveAclRule(invite: InviteState, key: string): BoardAclRule | undefined {
+  // Per-state ACL (from optional state machine) takes priority.
+  const stateConfig = invite.roomStates?.[invite.phase];
+  if (stateConfig?.board_acls && key in stateConfig.board_acls) {
+    return stateConfig.board_acls[key];
+  }
+  // Fall back to room-wide ACL.
+  return invite.boardAcls?.[key];
+}
+
+/** Check whether `updatedBy` may write to the given board key. */
+function checkBoardAcl(
+  invite: InviteState,
+  key: string,
+  updatedBy: string,
+): GuardResult {
+  const rule = effectiveAclRule(invite, key);
+  if (rule === undefined || rule === "anyone") return undefined;
+  if (rule === "host_only") {
+    if (updatedBy === invite.hostId) return undefined;
+    return json({ error: "only the host can write to this board key" }, 403);
+  }
+  if (Array.isArray(rule) && rule.includes(updatedBy)) return undefined;
+  return json({ error: "you don't have permission to write to this board key" }, 403);
+}
+
 export function setBoardKeyData(
   invite: InviteState,
   keyFromPath: string,
@@ -39,6 +70,8 @@ export function setBoardKeyData(
 ): { board: Record<string, BoardEntry>; key: string; entry: BoardEntry } | Response {
   const key = normalizeBoardKey(keyFromPath);
   if (key instanceof Response) return key;
+  const aclErr = checkBoardAcl(invite, key, updatedBy);
+  if (aclErr) return aclErr;
   const entryResult = makeBoardEntry(value, updatedBy);
   if (entryResult instanceof Response) return entryResult;
   const board = { ...invite.board, [key]: entryResult };
@@ -57,6 +90,8 @@ export function patchBoardData(
   for (const [rawKey, value] of Object.entries(patchValues)) {
     const key = normalizeBoardKey(rawKey);
     if (key instanceof Response) return key;
+    const aclErr = checkBoardAcl(invite, key, updatedBy);
+    if (aclErr) return aclErr;
     const entryResult = makeBoardEntry(value, updatedBy);
     if (entryResult instanceof Response) return entryResult;
     board[key] = entryResult;
@@ -70,9 +105,12 @@ export function patchBoardData(
 export function deleteBoardKeyData(
   invite: InviteState,
   keyFromPath: string,
+  deletedBy: string,
 ): { board: Record<string, BoardEntry>; key: string } | Response {
   const key = normalizeBoardKey(keyFromPath);
   if (key instanceof Response) return key;
+  const aclErr = checkBoardAcl(invite, key, deletedBy);
+  if (aclErr) return aclErr;
   const board = { ...invite.board };
   delete board[key];
   const validation = validateBoard(invite.boardSchema, board);

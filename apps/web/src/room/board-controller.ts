@@ -44,7 +44,7 @@ export class RoomBoardController {
 
   deleteKey(request: Request, invite: InviteState, keyFromPath: string): Promise<Response> {
     return joinedThen(invite, request, async (auth) => {
-      const result = deleteBoardKeyData(invite, keyFromPath);
+      const result = deleteBoardKeyData(invite, keyFromPath, auth.participantId);
       if (result instanceof Response) return result;
       await this.storage.patchAndSave(invite, { board: result.board });
       this.events.notifyBoard(result.key, auth.participantId);

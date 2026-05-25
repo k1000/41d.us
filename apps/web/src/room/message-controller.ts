@@ -1,9 +1,9 @@
 import { json } from "../format";
-import type { InviteState } from "../types";
+import type { InviteState, Participant } from "../types";
 import { joinedThen } from "./auth-context";
 import type { RoomEventBus } from "./events";
 import { buildReadResponse, createSentMessage, isReadableMessage, parseReadOptions } from "./messages";
-import { withReadReceipt } from "./participants";
+import { parseParticipantProfile, withReadReceipt, withUpdatedParticipant } from "./participants";
 import type { RoomStorage } from "./storage";
 
 export class RoomMessageController {
@@ -16,9 +16,31 @@ export class RoomMessageController {
     return joinedThen(invite, request, async (auth) => {
       const result = createSentMessage(auth.body, auth.participantId, invite);
       if (result instanceof Response) return result;
-      await this.storage.patchAndSave(invite, { nextSeq: result.seq, messages: result.messages });
+
+      // Optional: update participant status alongside the message.
+      // Fields are top-level (outside the encrypted body) so the server
+      // can manage participant metadata without needing decryption keys.
+      const profile = parseParticipantProfile(auth.body);
+      if (profile instanceof Response) return profile;
+      const hasStatusUpdate =
+        profile.state !== undefined ||
+        profile.status !== undefined ||
+        profile.model !== undefined ||
+        profile.skills !== undefined;
+
+      let updatedInvite = { ...invite, nextSeq: result.seq, messages: result.messages };
+      let updatedParticipant: Participant | undefined;
+      if (hasStatusUpdate) {
+        updatedInvite = withUpdatedParticipant(updatedInvite, auth.participantId, profile);
+        updatedParticipant = updatedInvite.participants[auth.participantId];
+      }
+
+      await this.storage.putInvite(updatedInvite);
       this.events.notifyMessage(result.message, result.seq);
-      return json({ ok: true, id: result.message.id, seq: result.seq });
+
+      const response: Record<string, unknown> = { ok: true, id: result.message.id, seq: result.seq };
+      if (updatedParticipant) response.participant = updatedParticipant;
+      return json(response);
     });
   }
 

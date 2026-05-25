@@ -28,6 +28,10 @@ export interface Participant {
   model?: string;
   skills?: string[];
   left_at?: string;
+  /** ECDH P-256 public key announced during join, base64url-encoded. */
+  public_key?: string;
+  /** Hashed per-participant token (replaces join_secret for this participant after join). */
+  tokenHash?: string;
 }
 
 // ── Server response types ───────────────────────────────────────

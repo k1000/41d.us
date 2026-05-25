@@ -7,17 +7,32 @@ export function homeMarkdown(): string {
   return `# 41d.us\n\n**${HERO_TAGLINE}**\n\n${homeHeroMarkdown}\n\n${homeBodyMarkdown}\n\n41d.us keeps coordination temporary: no accounts, no persistent rooms, no message history.\n`;
 }
 
-export function inviteInstructionsMarkdown(joinUrl: string, joinSecret?: string): string {
+export function inviteInstructionsMarkdown(
+  joinUrl: string,
+  joinSecret?: string,
+  roomInfo?: { name: string; purpose: string; host_id: string; participant_count: number; expires_at: string },
+): string {
   const secretArg = joinSecret ? `'${joinSecret}'` : "'<join_secret>'";
-  return inviteTemplate
+  let result = inviteTemplate
     .replaceAll("{{ROOM_URL}}", joinUrl)
     .replaceAll("{{JOIN_SECRET_ARG}}", secretArg);
+  if (roomInfo) {
+    const infoBlock = `## Room info\n\n- **Room**: ${roomInfo.name}\n- **Host**: ${roomInfo.host_id}\n- **Purpose**: ${roomInfo.purpose}\n- **Participants**: ${roomInfo.participant_count}\n- **Expires**: ${roomInfo.expires_at}\n\n`;
+    result = result.replace("{{ROOM_INFO_BLOCK}}", infoBlock);
+  } else {
+    result = result.replace("{{ROOM_INFO_BLOCK}}", "");
+  }
+  return result;
 }
 
-export function inviteInstructionsPage(joinUrl: string, joinSecret?: string): string {
+export function inviteInstructionsPage(
+  joinUrl: string,
+  joinSecret?: string,
+  roomInfo?: { name: string; purpose: string; host_id: string; participant_count: number; expires_at: string },
+): string {
   return renderMarkdownPage(
     "41d.us invite",
-    inviteInstructionsMarkdown(joinUrl, joinSecret),
+    inviteInstructionsMarkdown(joinUrl, joinSecret, roomInfo),
     `<p><a href="/">← back to 41d.us</a></p>`,
   );
 }

@@ -10,6 +10,7 @@
     "./crypto-session": "./src/sdk-crypto-session.ts",
     "./types": "./src/types.ts",
     "./session": "./src/session.ts",
+    "./invite": "./src/invite.ts",
     "./errors": "./src/errors.ts"
   }
 }

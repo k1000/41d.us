@@ -1,9 +1,10 @@
 import type { RoomMessage } from "../types";
 import { visibleTo } from "./messages";
 
+const ENCODER = new TextEncoder();
+
 const SSE_HEARTBEAT_MS = 25_000;
 const SSE_SWEEP_INTERVAL = 50;
-const ENCODER = new TextEncoder();
 
 interface EventSubscriber {
   participantId: string;

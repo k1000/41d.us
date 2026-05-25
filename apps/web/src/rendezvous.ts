@@ -5,7 +5,7 @@ import { tokenAuthThen, participantAuthThen, joinedThen } from "./room/auth-cont
 import { RoomBoardController } from "./room/board-controller";
 import { RoomEvents } from "./room/events";
 import type { RoomEventBus } from "./room/events";
-import { roomExport, roomInfo, roomStatus } from "./room/info";
+import { roomExport, roomInfo, roomStatus, roomTransitionInfo } from "./room/info";
 import { RoomInitController } from "./room/init-controller";
 import { RoomMessageController } from "./room/message-controller";
 import { activeParticipants } from "./room/participants";
@@ -51,10 +51,18 @@ export class RendezvousSession implements DurableObject {
 
     const roomUrl = new URL(request.url);
     roomUrl.search = "";
+    const secretFromUrl = url.searchParams.get("s") ?? undefined;
+    const roomInfo = {
+      name: invite.roomName,
+      purpose: invite.purpose,
+      host_id: invite.hostId,
+      participant_count: activeParticipants(invite.participants).length,
+      expires_at: new Date(invite.expiresAt).toISOString(),
+    };
     return respondNegotiated(
       request,
-      () => inviteInstructionsPage(roomUrl.toString()),
-      () => inviteInstructionsMarkdown(roomUrl.toString()),
+      () => inviteInstructionsPage(roomUrl.toString(), secretFromUrl, roomInfo),
+      () => inviteInstructionsMarkdown(roomUrl.toString(), secretFromUrl, roomInfo),
     );
   }
 
@@ -91,6 +99,7 @@ export class RendezvousSession implements DurableObject {
       status: () => this.handleStatus(request, invite),
       events: () => this.handleEvents(request, invite),
       extend: () => this.handleExtendTtl(request, invite),
+      transition: () => this.handleTransition(request, invite),
     });
   }
 
@@ -127,6 +136,63 @@ export class RendezvousSession implements DurableObject {
       const url = new URL(request.url);
       const includeSelf = url.searchParams.get("include_self") === "true";
       return this.events.subscribe(auth.participantId, includeSelf, invite.nextSeq);
+    });
+  }
+
+  private handleTransition(
+    request: Request,
+    invite: InviteState,
+  ): Promise<Response> {
+    return participantAuthThen(invite, request, async (auth) => {
+      const states = invite.roomStates;
+      if (!states || Object.keys(states).length === 0) {
+        return json({ error: "room has no state machine configured" }, 400);
+      }
+      if (auth.participantId !== invite.hostId) {
+        return json({ error: "only host can transition room state" }, 403);
+      }
+
+      const event = auth.body.event as string | undefined;
+      if (!event) return json({ error: "'event' field is required" }, 400);
+
+      const currentState = states[invite.phase];
+      if (!currentState) {
+        return json({ error: `current state "${invite.phase}" is not a known state` }, 400);
+      }
+
+      const to = currentState.transitions[event];
+      if (!to) {
+        const available = Object.keys(currentState.transitions);
+        return json({
+          error: `no transition "${event}" from "${invite.phase}"`,
+          available_events: available,
+        }, 400);
+      }
+
+      const nextState = states[to];
+      if (!nextState) {
+        return json({ error: `target state "${to}" not found in room configuration` }, 400);
+      }
+
+      // Record the transition as a system message.
+      const seq = invite.nextSeq + 1;
+      const transitionMessage = {
+        id: crypto.randomUUID(),
+        seq,
+        from: auth.participantId,
+        to: "all" as const,
+        reply_to: null as string | null,
+        intent: "room.transitioned" as const,
+        priority: "normal" as const,
+        body: { from: invite.phase, event, to },
+        created_at: new Date().toISOString(),
+      } satisfies import("./types").RoomMessage;
+      const messages = [...invite.messages, transitionMessage].slice(-200);
+
+      await this.storage.patchAndSave(invite, { phase: to, nextSeq: seq, messages });
+      this.events.notifyMessage(transitionMessage, seq);
+
+      return json({ ok: true, from: invite.phase, event, to, ...roomTransitionInfo(nextState) });
     });
   }
 

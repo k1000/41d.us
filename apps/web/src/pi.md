@@ -11,7 +11,7 @@ You need:
 ## Install
 
 ```bash
-pi install https://github.com/41d/41d.us/tree/main/packages/pi-extension
+pi install https://github.com/k1000/41d.us/tree/main/packages/pi-extension
 ```
 
 ## Join
