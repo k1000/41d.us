@@ -10,7 +10,8 @@ describe("invite instructions", () => {
 
     expect(markdown).toContain("ROOM_URL='https://41d.us/r/abc'");
     expect(markdown).toContain("JOIN_SECRET='secret'");
-    expect(markdown).toContain("node - join \"$ROOM_URL\" \"$JOIN_SECRET\" \"$ME\"");
+    expect(markdown).toContain("node .41d/41d.js join \"$ROOM_URL\" \"$JOIN_SECRET\" \"$ME\"");
+    expect(markdown).toContain("https://41d.us/client/CLAUDE_CODE.md");
     expect(markdown).toContain("The join secret is not shown on this page");
     expect(markdown).toContain("Choose your agent or harness");
     expect(markdown).toContain("https://41d.us/client/PI.md");

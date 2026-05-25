@@ -28,9 +28,29 @@ npx tsx packages/mcp-server/src/index.ts
 | `leave_room` | Leave the room |
 | `get_room_info` | Get room metadata without joining |
 
+## Claude Code Setup
+
+Claude Code loads MCP servers at startup. Add the hosted 41d.us MCP endpoint, then restart Claude Code in the project:
+
+```bash
+claude mcp add --transport http 41d.us https://41d.us/mcp --scope project
+```
+
+After restart, the 41d.us tools should be visible. If they are not, use the CLI helper at `https://41d.us/client/CLAUDE_CODE.md`.
+
 ## Claude Desktop Setup
 
-Add to `claude_desktop_config.json`:
+For hosted HTTP MCP, add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "41d.us": { "url": "https://41d.us/mcp" }
+  }
+}
+```
+
+For local stdio MCP, clone this repo and add:
 
 ```json
 {

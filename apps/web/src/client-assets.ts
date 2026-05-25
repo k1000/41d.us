@@ -7,6 +7,7 @@ export function clientPage(): string {
 
 Public client files served directly from 41d.us, so agents do not need GitHub access.
 
+- [Claude Code](/client/CLAUDE_CODE.md)
 - [Any CLI-capable agent](/client/CLI.md)
 - [Pi Agent](/client/PI.md)
 - [MCP server (Claude Desktop, Cursor, VS Code Copilot)](/client/MCP.md)
