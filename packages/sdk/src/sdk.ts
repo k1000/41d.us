@@ -3,13 +3,13 @@ export { buildRoomClient } from "./room-client";
 import { buildRoomClient } from "./room-client";
 import { request } from "./transport";
 
-export type { Invite, RoomClient, CreateInviteOptions } from "./room-client";
+export type { Invite, RoomClient, CreateRoomOptions } from "./room-client";
 
-export async function createInvite(
+export async function createRoom(
   baseUrl = "https://41d.us",
-  options: import("./room-client").CreateInviteOptions,
+  options: import("./room-client").CreateRoomOptions,
 ): Promise<import("./room-client").Invite> {
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/invites`, {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/rooms`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -24,8 +24,17 @@ export async function createInvite(
       board: options.board,
     }),
   });
-  if (!response.ok) throw new Error(`failed to create invite: ${response.status}`);
+  if (!response.ok) throw new Error(`failed to create room: ${response.status}`);
   return response.json() as Promise<import("./room-client").Invite>;
+}
+
+export async function createRoomAndJoin(
+  baseUrl = "https://41d.us",
+  options: import("./room-client").CreateRoomOptions,
+  joinOptions: { model?: string; skills?: string[] } = {},
+): Promise<import("./room-client").RoomClient> {
+  const invite = await createRoom(baseUrl, options);
+  return joinRoom(invite, options.hostId ?? invite.room.host_id, joinOptions);
 }
 
 export async function joinRoom(

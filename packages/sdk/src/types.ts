@@ -35,6 +35,7 @@ export interface Participant {
 export interface RoomInfo {
   room_id: string;
   name: string;
+  purpose: string;
   host_id: string;
   max_participants: number;
 }

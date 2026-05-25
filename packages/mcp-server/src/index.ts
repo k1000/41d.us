@@ -13,11 +13,19 @@ import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { createInvite } from "@41d/sdk";
+import { createRoom } from "@41d/sdk";
 import { getOrCreateSession, clearRoomSessions } from "@41d/sdk/session";
 import { sessions, parseInvite, parseSkills, anonGet, jsonContent, clientFor } from "./helpers";
 export { parseInvite, parseSkills };
 
+export function parseFirstMessage(value: string): string | Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : value;
+  } catch {
+    return value;
+  }
+}
 
 // ── Server setup ────────────────────────────────────────────────
 
@@ -29,25 +37,27 @@ const server = new McpServer(
 server.registerTool(
   "create_room",
   {
-    description: "Create a new 41d.us encrypted coordination room. Returns the full invite JSON which must be saved and shared with other agents.",
+    description: "Create a new 41d.us encrypted coordination room and automatically join the host. Returns invite JSON containing room_url and join_secret, plus host_joined metadata.",
     inputSchema: {
       hostId: z.string().optional().describe("Optional host identifier (default: 'agent')"),
       roomName: z.string().optional().describe("Human-readable room name"),
       maxParticipants: z.number().int().min(2).max(64).optional().describe("Max participants (default: 16)"),
       inviteTtlMinutes: z.number().int().min(1).max(60).optional().describe("Invite TTL in minutes (default: 10, min: 1, max: 60)"),
-      purpose: z.string().optional().describe("Short text describing the room's purpose, shown as the first message"),
+      purpose: z.string().optional().describe("Public, non-sensitive room purpose visible in room metadata"),
+      firstMessage: z.string().optional().describe("Room-internal kickoff message as JSON string or plain text; use for detailed workflow, rules, and sensitive context shared only with invitees"),
       board: z.string().optional().describe("Optional initial board state as a JSON string (e.g. '{\"tasks\":{},\"kanban\":{}}')"),
       boardSchema: z.string().optional().describe("Optional JSON Schema for board validation, as a JSON string"),
     },
   },
   async (args) => {
     const hostId = args.hostId ?? "agent";
-    const invite = await createInvite("https://41d.us", {
+    const invite = await createRoom("https://41d.us", {
       hostId,
       roomName: args.roomName,
       maxParticipants: args.maxParticipants,
       inviteTtlMs: args.inviteTtlMinutes ? args.inviteTtlMinutes * 60_000 : undefined,
       purpose: args.purpose,
+      firstMessage: args.firstMessage ? parseFirstMessage(args.firstMessage) : undefined,
       board: args.board ? JSON.parse(args.board) : undefined,
       boardSchema: args.boardSchema ? JSON.parse(args.boardSchema) : undefined,
     });
@@ -59,9 +69,9 @@ server.registerTool(
 server.registerTool(
   "join_room",
   {
-    description: "Join a 41d.us room using an invite JSON. Generates ECDH keys, announces them, and stores the session for subsequent operations. Re-joining is idempotent.",
+    description: "Join a 41d.us room using the invite JSON returned by create_room. Generates ECDH keys, announces them, and stores the session for subsequent operations. Re-joining is idempotent.",
     inputSchema: {
-      inviteJson: z.string().describe("The full invite JSON string (from create_room or an external invite)"),
+      inviteJson: z.string().describe("The full invite JSON string returned by create_room or shared by the host"),
       participantId: z.string().min(1).describe("Unique participant name for this agent in the room"),
       model: z.string().optional().describe("Model name to publish on the participant record"),
       skills: z.string().optional().describe("Comma-separated skill list (e.g. 'typescript,review,docs')"),

@@ -5,7 +5,7 @@ import { normalizeRoomId, normalizeHostId, normalizeRoomName, normalizeMaxPartic
 import { buildApiLinks, buildQuickstart } from "./invite-quickstart";
 import type { Env, InitPayload } from "./types";
 
-export interface CreateInviteBody {
+export interface CreateRoomBody {
   room_id?: string;
   host_id?: string;
   room_name?: string;
@@ -17,10 +17,11 @@ export interface CreateInviteBody {
   invite_ttl_ms?: number;
 }
 
-export interface NormalizedInviteRequest {
+export interface NormalizedCreateRoomRequest {
   roomId: string;
   hostId: string;
   roomName: string;
+  purpose: string;
   maxParticipants: number;
   inviteTtlMs: number;
   firstMessage?: Record<string, unknown>;
@@ -28,9 +29,9 @@ export interface NormalizedInviteRequest {
   initialBoard?: Record<string, unknown>;
 }
 
-export async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const body = await c.req.json().catch(() => ({})) as CreateInviteBody;
-  const normalized = normalizeCreateInviteBody(body);
+export async function handleCreateRoom(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const body = await c.req.json().catch(() => ({})) as CreateRoomBody;
+  const normalized = normalizeCreateRoomBody(body);
   const roomId = normalized.roomId;
   const joinSecret = randomBase64Url(32);
   const expiresAt = Date.now() + normalized.inviteTtlMs;
@@ -41,6 +42,7 @@ export async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise
     phase: "waiting",
     hostId: normalized.hostId,
     roomName: normalized.roomName,
+    purpose: normalized.purpose,
     maxParticipants: normalized.maxParticipants,
     firstMessage: normalized.firstMessage,
     boardSchema: normalized.boardSchema,
@@ -67,15 +69,17 @@ export async function handleCreateInvite(c: Context<{ Bindings: Env }>): Promise
   }));
 }
 
-function normalizeCreateInviteBody(body: CreateInviteBody): NormalizedInviteRequest {
+function normalizeCreateRoomBody(body: CreateRoomBody): NormalizedCreateRoomRequest {
   const roomName = normalizeRoomName(body.room_name);
+  const purpose = normalizePurpose(body.purpose, roomName);
   return {
     roomId: normalizeRoomId(body.room_id),
     hostId: normalizeHostId(body.host_id),
     roomName,
+    purpose,
     maxParticipants: normalizeMaxParticipants(body.max_participants),
     inviteTtlMs: normalizeInviteTtl(body.invite_ttl_ms),
-    firstMessage: normalizeFirstMessage(body.first_message ?? body.purpose, roomName),
+    firstMessage: normalizeFirstMessage(body.first_message, purpose),
     ...(body.board_schema && typeof body.board_schema === "object" ? { boardSchema: body.board_schema } : {}),
     ...(body.board && typeof body.board === "object" ? { initialBoard: body.board } : {}),
   };
@@ -86,13 +90,18 @@ function normalizeInviteTtl(value: number | undefined): number {
   return Math.min(Math.max(Math.trunc(value), MIN_INVITE_TTL_MS), MAX_INVITE_TTL_MS);
 }
 
-function normalizeFirstMessage(value: string | Record<string, unknown> | undefined, roomName: string): Record<string, unknown> | undefined {
+function normalizePurpose(value: string | undefined, roomName: string): string {
+  const purpose = typeof value === "string" ? value.trim() : "";
+  return purpose || roomName;
+}
+
+function normalizeFirstMessage(value: string | Record<string, unknown> | undefined, purpose: string): Record<string, unknown> | undefined {
   if (typeof value === "string") {
     const text = value.trim();
     return text ? { text } : undefined;
   }
   if (value && typeof value === "object") return value;
-  return { text: `Room purpose: ${roomName}` };
+  return { text: `Room purpose: ${purpose}` };
 }
 
 async function initInviteState(c: Context<{ Bindings: Env }>, roomId: string, state: InitPayload): Promise<Response> {
@@ -105,7 +114,7 @@ async function initInviteState(c: Context<{ Bindings: Env }>, roomId: string, st
   });
 }
 
-function buildInviteResponse(args: NormalizedInviteRequest & { requestUrl: URL; roomUrl: string; roomId: string; joinSecret: string; expiresAt: number }) {
+function buildInviteResponse(args: NormalizedCreateRoomRequest & { requestUrl: URL; roomUrl: string; roomId: string; joinSecret: string; expiresAt: number }) {
   return {
     intro: `You are invited by ${args.hostId} to the "${args.roomName}" multi-agent 41d.us room. Use the encrypted client first: join announces your ECDH public key, read/sync learns peer keys, and send wraps each message key for every recipient.`,
     next_step: "Run quickstart.join, then quickstart.read_from_room_file or quickstart.send_encrypted. Plain curl joins are only for diagnostics and cannot receive encrypted messages until a key.exchange is announced.",
@@ -114,7 +123,7 @@ function buildInviteResponse(args: NormalizedInviteRequest & { requestUrl: URL; 
       name: args.roomName,
       host_id: args.hostId,
       max_participants: args.maxParticipants,
-      purpose: args.firstMessage,
+      purpose: args.purpose,
     },
     join_secret: args.joinSecret,
     room_url: args.roomUrl,

@@ -12,7 +12,7 @@ import type {
 
 // ── Public types ────────────────────────────────────────────────
 
-export interface CreateInviteOptions {
+export interface CreateRoomOptions {
   roomId?: string;
   hostId?: string;
   roomName?: string;
@@ -28,7 +28,7 @@ export interface Invite {
   intro: string;
   next_step: string;
   room_id: string;
-  room: { name: string; host_id: string; max_participants: number };
+  room: { name: string; purpose: string; host_id: string; max_participants: number };
   join_secret: string;
   room_url: string;
   board_schema?: Record<string, unknown> | null;

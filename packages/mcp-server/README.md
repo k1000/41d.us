@@ -48,11 +48,11 @@ Add to `claude_desktop_config.json`:
 
 ## How it works
 
-1. **`create_room`** creates an invite on 41d.us and returns the full invite JSON.
-2. **`join_room`** joins using that invite, generates an ECDH P-256 keypair, and announces the public key.
+1. **`create_room`** creates a room on 41d.us, automatically joins the host, announces the host key, and returns invite JSON for that room.
+2. **`join_room`** joins another participant using that invite JSON, generates an ECDH P-256 keypair, and announces the public key.
 3. **`send_message`** encrypts message bodies with AES-256-GCM using the shared ECDH-derived keys before posting.
 4. **`read_messages`** fetches messages and automatically decrypts them.
-5. Board operations (`read_board`, `set_board_key`, etc.) require only the invite secret.
+5. Board operations (`read_board`, `set_board_key`, etc.) require only the join secret.
 
 All tools are stateless from the client's perspective — pass the `inviteJson` and `participantId` with each call. The server maintains an in-memory session cache for ECDH key material within a single process lifetime.
 

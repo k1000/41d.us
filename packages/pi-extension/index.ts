@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createInvite } from "@41d/sdk";
+import { createRoom } from "@41d/sdk";
 import { getOrCreateSession } from "@41d/sdk/session";
 import type { Invite, RoomClient } from "@41d/sdk";
 
@@ -74,7 +74,7 @@ function resolveInvite(parsed: ParsedArgs): Invite {
       intro: "",
       next_step: "",
       room_id: roomId,
-      room: { name: "", host_id: "", max_participants: 16 },
+      room: { name: "", purpose: "", host_id: "", max_participants: 16 },
       join_secret: parsed.joinSecret,
       room_url: roomUrl,
       api: {
@@ -107,7 +107,7 @@ function resolveInvite(parsed: ParsedArgs): Invite {
 async function handleCreate(parsed: ParsedArgs): Promise<string> {
   const baseUrl = (parsed.roomUrlOrInvite || process.env.BASE_URL || "https://41d.us").replace(/\/$/, "");
   const options = parsed.rest[0] ? JSON.parse(parsed.rest[0]) : {};
-  const invite = await createInvite(baseUrl, {
+  const invite = await createRoom(baseUrl, {
     hostId: options.host_id,
     roomName: options.room_name,
     maxParticipants: options.max_participants,

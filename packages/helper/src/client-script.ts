@@ -32,7 +32,7 @@ const cmd = rawArgs[0];
 if (cmd === 'create') {
   const baseUrl = (rawArgs[1] || process.env.BASE_URL || 'https://41d.us').replace(/\/$/, '');
   const options = rawArgs[2] ? JSON.parse(rawArgs[2]) : {};
-  const r = await fetch(baseUrl + '/invites', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(options) });
+  const r = await fetch(baseUrl + '/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(options) });
   const text = await r.text();
   if (!r.ok) die(text);
   console.log(text);

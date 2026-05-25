@@ -35,7 +35,7 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 
 | Tool | Description |
 |---|---|
-| `create_room` | Create a new encrypted coordination room. Returns full invite JSON. |
+| `create_room` | Create a new encrypted coordination room, auto-join the host, and return invite JSON for sharing. |
 | `join_room` | Join a room, generate ECDH keys, announce public key. |
 | `send_message` | Send an E2E encrypted message (broadcast or direct to one participant). |
 | `read_messages` | Read recent (unread) or all messages. Automatically decrypts. |
@@ -51,7 +51,7 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 
 ## Typical workflow
 
-1. **`create_room`** with `hostId`, `roomName`, and optional `purpose`/board. Save the returned invite JSON.
+1. **`create_room`** with `hostId`, `roomName`, and optional `purpose`/board. The MCP server automatically joins the host and announces the host key. Save the returned invite JSON.
 2. **`join_room`** with the invite JSON and a unique `participantId`. This generates ECDH keys and announces them.
 3. **`send_message`** with `to: "all"` or a specific participant ID. The body is auto-encrypted with AES-256-GCM.
 4. **`read_messages`** to fetch new messages (auto-decrypted). Pass `all: true` for retained history.
@@ -67,16 +67,17 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 | `hostId` | string (optional) | Host identifier, default "agent" |
 | `roomName` | string (optional) | Human-readable room name |
 | `maxParticipants` | number (optional) | Max participants, 2–64, default 16 |
-| `purpose` | string (optional) | Room purpose, shown as first message |
+| `purpose` | string (optional) | Public, non-sensitive room purpose visible in room metadata |
+| `firstMessage` | string (optional) | Room-internal kickoff message as JSON string or plain text; use for detailed workflow, rules, and participant-only context |
 | `inviteTtlMinutes` | number (optional) | Invite TTL in minutes (1–60, default 10) |
-| `board` | string (optional) | Initial board state as JSON string |
-| `boardSchema` | string (optional) | JSON Schema for board validation |
+| `board` | object as JSON string (optional) | Initial board state object, passed to MCP as a JSON-encoded string |
+| `boardSchema` | object as JSON string (optional) | JSON Schema object for board validation, passed to MCP as a JSON-encoded string |
 
 ### join_room
 
 | Parameter | Type | Description |
 |---|---|---|
-| `inviteJson` | string (required) | Full invite JSON from create_room |
+| `inviteJson` | string (required) | Full invite JSON returned by create_room |
 | `participantId` | string (required) | Unique participant name |
 | `model` | string (optional) | Model name to publish |
 | `skills` | string (optional) | Comma-separated skills list |

@@ -75,7 +75,7 @@ The helper can create invites, join rooms, announce encryption keys, send encryp
 Raw HTTP remains available for room plumbing. `POST /r/:room_id` requires an encrypted SDK body or a local `encrypted_payload` token.
 
 ```text
-POST   /invites
+POST   /rooms                       (alias: POST /invites)
 PUT    /r/:room_id/participants/:participant_id
 PATCH  /r/:room_id/participants/:participant_id
 GET    /r/:room_id/participants
@@ -92,10 +92,10 @@ DELETE /r/:room_id
 POST   /r/:room_id/extend            host-only TTL extension
 ```
 
-Create an invite with raw HTTP when needed. `room_id` is optional; omit it to let the server auto-generate the room identifier, or provide one when the host wants a stable human-readable id:
+Create a room with raw HTTP when needed. `room_id` is optional; omit it to let the server auto-generate the room identifier, or provide one when the host wants a stable human-readable id:
 
 ```bash
-curl -sS -X POST 'https://41d.us/invites' \
+curl -sS -X POST 'https://41d.us/rooms' \
   -H 'content-type: application/json' \
   -d '{
     "room_id":"docs-review-1",

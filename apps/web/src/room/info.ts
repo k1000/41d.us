@@ -5,6 +5,8 @@ export function roomInfo(invite: InviteState) {
   return {
     room_id: invite.roomId,
     name: invite.roomName,
+    // `||` covers pre-purpose rooms whose persisted state lacks the field.
+    purpose: invite.purpose || invite.roomName,
     host_id: invite.hostId,
     max_participants: invite.maxParticipants,
   };

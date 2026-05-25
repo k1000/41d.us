@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { clientPage, mcpMarkdown, orchestrationMarkdown, sdkMarkdown } from "./client-assets";
+import { cliMarkdown, clientPage, mcpMarkdown, orchestrationMarkdown, piMarkdown, sdkMarkdown } from "./client-assets";
 import { clientScript } from "@41d/helper/client-script";
 import { localCryptoPy, localCryptoSh, localCryptoTs } from "@41d/helper/local-crypto-assets";
 import { respondNegotiated } from "./format";
@@ -9,7 +9,7 @@ import { RendezvousSession } from "./rendezvous";
 import { securityMarkdown, securityPage } from "./security";
 import { skillExampleMarkdown, skillMarkdown } from "@41d/skill";
 import { skillExamplePage, skillPage } from "./skill-pages";
-import { handleCreateInvite } from "./invite";
+import { handleCreateRoom } from "./invite";
 import type { Env } from "./types";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -57,6 +57,20 @@ app.get("/client/SDK.md", (c) =>
   }),
 );
 
+app.get("/client/PI.md", (c) =>
+  c.body(piMarkdown, 200, {
+    "content-type": "text/markdown; charset=utf-8",
+    "content-disposition": 'inline; filename="PI.md"',
+  }),
+);
+
+app.get("/client/CLI.md", (c) =>
+  c.body(cliMarkdown, 200, {
+    "content-type": "text/markdown; charset=utf-8",
+    "content-disposition": 'inline; filename="CLI.md"',
+  }),
+);
+
 app.get("/client/ORCHESTRATION.md", (c) =>
   c.body(orchestrationMarkdown, 200, {
     "content-type": "text/markdown; charset=utf-8",
@@ -94,7 +108,8 @@ app.get("/skill/SKILL.md", (c) =>
   }),
 );
 
-app.post("/invites", handleCreateInvite);
+app.post("/rooms", handleCreateRoom);
+app.post("/invites", handleCreateRoom);
 
 // Both routes are needed: Hono's `*` wildcard matches sub-paths but not the
 // bare root path. The first catches the root, the second catches sub-paths.

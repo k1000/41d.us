@@ -14,6 +14,7 @@ export interface InitPayload {
   phase: SessionPhase;
   hostId: string;
   roomName: string;
+  purpose: string;
   maxParticipants: number;
   boardSchema?: Record<string, unknown>;
   /** Consumed during init — seeded as the first RoomMessage, then discarded. */
@@ -29,6 +30,7 @@ export interface InviteState {
   phase: SessionPhase;
   hostId: string;
   roomName: string;
+  purpose: string;
   maxParticipants: number;
   boardSchema?: Record<string, unknown>;
   nextSeq: number;
