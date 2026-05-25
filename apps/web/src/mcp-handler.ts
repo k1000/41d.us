@@ -315,16 +315,10 @@ const tools: Record<string, ToolDef> = {
       const participantId = params.participantId as string;
       const crypto = await ensureEcdhSession(roomId, participantId);
 
-      // Re-announce key and refresh peer keys (handles cross-isolate session loss)
+      // Ensure self-key is registered for self-include, then refresh peer keys
+      // (handles cross-isolate session loss).
       await crypto.announceKeyBody();
-      try {
-        const participantsResult = await doFetch(env, roomUrl, "/participants", secret) as Record<string, unknown>;
-        const participants = (participantsResult.participants ?? []) as Array<{ id: string; public_key?: string }>;
-        const peers = participants
-          .filter((p: { id: string; public_key?: string }) => p.id !== participantId && p.public_key)
-          .map((p: { id: string; public_key?: string }) => ({ id: p.id, public_key: p.public_key! }));
-        if (peers.length > 0) await crypto.processPeerKeys(peers);
-      } catch { /* best-effort peer refresh */ }
+      await refreshPeerKeys(env, roomUrl, secret, participantId, crypto);
 
       const to = params.to === "all" ? "all" : (params.to as string).includes(",") ? (params.to as string).split(",").map((s) => s.trim()) : params.to as string;
       const encryptedBody = await crypto.encryptForSend(JSON.parse(params.body as string), to);
