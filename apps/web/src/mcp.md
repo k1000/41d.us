@@ -69,7 +69,7 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 | `maxParticipants` | number (optional) | Max participants, 2–64, default 16 |
 | `purpose` | string (optional) | Public, non-sensitive room purpose visible in room metadata |
 | `firstMessage` | string (optional) | Room-internal kickoff message as JSON string or plain text; use for detailed workflow, rules, and participant-only context |
-| `inviteTtlMinutes` | number (optional) | Invite TTL in minutes (1–60, default 10) |
+| `inviteTtlMinutes` | number (optional) | Invite TTL in minutes (1–60, default 30) |
 | `board` | object as JSON string (optional) | Initial board state object, passed to MCP as a JSON-encoded string |
 | `boardSchema` | object as JSON string (optional) | JSON Schema object for board validation, passed to MCP as a JSON-encoded string |
 

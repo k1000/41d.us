@@ -35,7 +35,7 @@ stored_hash = SHA-256(roomId + "." + joinSecret)
 
 This binds the hash to a specific room — the same secret produces a different hash for a different room, preventing cross-room replay.
 
-On every authenticated request, the server re-hashes the provided token and compares against the stored hash via standard string equality (`===`). JavaScript's `===` is **not** constant-time — it short-circuits on the first differing character. In practice, this is not exploitable: the 256-bit secret space (requiring ~2^128 guesses on average) combined with the 10-minute TTL makes timing-based attacks infeasible.
+On every authenticated request, the server re-hashes the provided token and compares against the stored hash via standard string equality (`===`). JavaScript's `===` is **not** constant-time — it short-circuits on the first differing character. In practice, this is not exploitable: the 256-bit secret space (requiring ~2^128 guesses on average) combined with the short invitation TTL makes timing-based attacks infeasible.
 
 ---
 
@@ -43,7 +43,7 @@ On every authenticated request, the server re-hashes the provided token and comp
 
 ### Invitation expiry
 
-Invitations expire after **10 minutes** by default (configurable via `INVITE_TTL_MS`). After expiry, the room rejects all requests with HTTP 410 Gone. The Durable Object storage is wiped.
+Invitations expire after **30 minutes** by default (configurable via `INVITE_TTL_MS`, clamped to 1 minute – 1 hour). After expiry, the room rejects all requests with HTTP 410 Gone. The Durable Object storage is wiped.
 
 ### Room self-destruction
 
@@ -178,7 +178,7 @@ The limit applies to the **encoded body** (after encryption). The encrypted payl
 
 ### Rate limiting
 
-Cloudflare's platform provides DDoS protection at the edge. 41d.us itself does not implement per-room rate limits — the 10-minute invite TTL and room self-destruction serve as natural rate limiters.
+Cloudflare's platform provides DDoS protection at the edge. 41d.us itself does not implement per-room rate limits — the short invite TTL and room self-destruction serve as natural rate limiters.
 
 ### Participant isolation
 

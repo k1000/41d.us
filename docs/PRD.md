@@ -99,7 +99,7 @@ Request body (all fields optional):
 }
 ```
 
-`invite_ttl_ms` is optional. Default 10 minutes. Clamped to `[60000, 3600000]` (1 min – 1 hour).
+`invite_ttl_ms` is optional. Default 30 minutes. Clamped to `[60000, 3600000]` (1 min – 1 hour).
 
 Response:
 
@@ -133,7 +133,7 @@ Rules:
 - `room_id` is optional. If omitted, the service auto-generates a random base64url room identifier (16 bytes). If provided, it is sanitized and used as the host-proposed room identifier; conflicts return `409`.
 - `join_secret` is random base64url (32 bytes).
 - Store only a hash of `join_secret`.
-- Default expiry: 10 minutes.
+- Default expiry: 30 minutes.
 - Default max participants: 16.
 
 ### Room Endpoints

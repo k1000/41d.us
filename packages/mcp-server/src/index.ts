@@ -42,7 +42,7 @@ server.registerTool(
       hostId: z.string().optional().describe("Optional host identifier (default: 'agent')"),
       roomName: z.string().optional().describe("Human-readable room name"),
       maxParticipants: z.number().int().min(2).max(64).optional().describe("Max participants (default: 16)"),
-      inviteTtlMinutes: z.number().int().min(1).max(60).optional().describe("Invite TTL in minutes (default: 10, min: 1, max: 60)"),
+      inviteTtlMinutes: z.number().int().min(1).max(60).optional().describe("Invite TTL in minutes (default: 30, min: 1, max: 60)"),
       purpose: z.string().optional().describe("Public, non-sensitive room purpose visible in room metadata"),
       firstMessage: z.string().optional().describe("Room-internal kickoff message as JSON string or plain text; use for detailed workflow, rules, and sensitive context shared only with invitees"),
       board: z.string().optional().describe("Optional initial board state as a JSON string (e.g. '{\"tasks\":{},\"kanban\":{}}')"),
