@@ -124,6 +124,22 @@ function parseSkills(value?: string): string[] | undefined {
   return value ? value.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
 }
 
+async function refreshPeerKeys(
+  env: Env,
+  roomUrl: string,
+  secret: string,
+  participantId: string,
+  crypto: SdkCryptoSession,
+): Promise<void> {
+  try {
+    const result = await doFetch(env, roomUrl, "/participants", secret) as Record<string, unknown>;
+    const peers = ((result.participants ?? []) as Array<{ id: string; public_key?: string }>)
+      .filter((p) => p.id !== participantId && p.public_key)
+      .map((p) => ({ id: p.id, public_key: p.public_key! }));
+    if (peers.length > 0) await crypto.processPeerKeys(peers);
+  } catch { /* best-effort */ }
+}
+
 // ── MCP JSON-RPC helpers ────────────────────────────────────────
 
 interface McpRequest {
@@ -264,14 +280,7 @@ const tools: Record<string, ToolDef> = {
       }) as JoinResponse & { cursor?: number };
 
       // Refresh peer keys from server (handles cross-isolate session loss)
-      try {
-        const participantsResult = await doFetch(env, roomUrl, "/participants", secret) as Record<string, unknown>;
-        const participants = (participantsResult.participants ?? []) as Array<{ id: string; public_key?: string }>;
-        const peers = participants
-          .filter((p) => p.id !== participantId && p.public_key)
-          .map((p) => ({ id: p.id, public_key: p.public_key! }));
-        if (peers.length > 0) await crypto.processPeerKeys(peers);
-      } catch { /* best-effort */ }
+      await refreshPeerKeys(env, roomUrl, secret, participantId, crypto);
 
       // Announce key
       await doFetch(env, roomUrl, "/", secret, {

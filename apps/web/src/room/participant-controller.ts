@@ -40,7 +40,9 @@ export class RoomParticipantController {
     if (profile instanceof Response) return profile;
     const { token, hash: tokenHash, tokenOnlyHash } = await generateParticipantToken(invite.roomId, participantId);
     participants[participantId] = createJoinedParticipant(participantId, profile, tokenHash);
-    let updated: InviteState = { ...invite, phase: "ready", participants };
+    // Preserve the room's state-machine phase; only legacy rooms transition "waiting" → "ready" on first join.
+    const nextPhase = invite.roomStates ? invite.phase : "ready";
+    let updated: InviteState = { ...invite, phase: nextPhase, participants };
     updated = withTokenIndex(updated, tokenOnlyHash, participantId);
     const seq = updated.nextSeq + 1;
     const systemMessage = createRoomMessage(

@@ -21,6 +21,9 @@
     "generate:client-script": "node scripts/generate-client-script.mjs",
     "check:generated": "node scripts/generate-client-script.mjs --check"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "workerd", "sharp"]
+  },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
     "hono": "^4.7.0",
