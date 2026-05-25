@@ -141,7 +141,7 @@ AES-GCM provides both **confidentiality** and **integrity/authenticity**. Any ta
 | room_id | Yes | Auto-generated random 128-bit id by default, or host-proposed sanitized id; used as Durable Object name |
 | secret_hash | Yes | SHA-256(room_id.secret), not reversible |
 | expires_at | Yes | Unix timestamp |
-| phase | Yes | "waiting" / "ready" / "closed" |
+| phase | Yes | State-machine state name (e.g. "active", "planning", "review") or legacy "waiting" / "ready" / "closed" |
 | host_id | Yes | Sanitized participant name |
 | room_name | Yes | Sanitized string, max 80 chars |
 | participant ids | Yes | Sanitized names |
