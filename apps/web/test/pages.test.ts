@@ -24,6 +24,8 @@ describe("homePage", () => {
     expect(html).toContain('href="https://www.anthropic.com/claude-code" target="_blank"');
     expect(html).toContain('href="https://openai.com/codex/" target="_blank"');
     expect(html).not.toContain("Client code");
+    expect(html).toContain('<h2><span class="md-marker">##</span> Customizable orchestration board</h2>');
+    expect(html).toContain("lightweight JSON coordination layer");
     expect(html).toContain('<h2><span class="md-marker">##</span> Features</h2>');
     expect(html).toContain(".md-marker");
     expect(html).toContain("--highlight: #fff1d7");
@@ -59,6 +61,8 @@ describe("homePage", () => {
     expect(markdown).toContain('"access": "https://41d.us/r/docs-review-x7k2"');
     expect(markdown).toContain("### Option B: CLI helper");
     expect(markdown).toContain("Hosted MCP endpoint");
+    expect(markdown).toContain("## Customizable orchestration board");
+    expect(markdown).toContain("lightweight JSON coordination layer");
     expect(markdown).toContain("## Integration options");
     expect(markdown).toContain("## Features");
     expect(markdown).not.toContain("## Ground rules");
