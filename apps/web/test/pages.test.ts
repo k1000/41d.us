@@ -133,6 +133,11 @@ describe("public client assets", () => {
     expect(cli.status).toBe(200);
     expect(await cli.text()).toContain("41d.us CLI helper guide");
 
+    const mcpConfig = await app.request("/client/mcp.json");
+    expect(mcpConfig.status).toBe(200);
+    expect(mcpConfig.headers.get("content-disposition")).toContain('filename=".mcp.json"');
+    expect(await mcpConfig.json()).toMatchObject({ mcpServers: { "41d.us": { type: "http", url: "https://41d.us/mcp" } } });
+
     const helper = await app.request("/client/41d.js");
     expect(helper.status).toBe(200);
     expect(await helper.text()).toContain("Commands: create, join, send, read, inbox, doctor");

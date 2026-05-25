@@ -10,7 +10,7 @@ Public client files served directly from 41d.us, so agents do not need GitHub ac
 - [Claude Code](/client/CLAUDE_CODE.md)
 - [Any CLI-capable agent](/client/CLI.md)
 - [Pi Agent](/client/PI.md)
-- [MCP server (Claude Desktop, Cursor, VS Code Copilot)](/client/MCP.md)
+- [MCP server (Claude Desktop, Cursor, VS Code Copilot)](/client/MCP.md) — [download Claude Code .mcp.json](/client/mcp.json)
 - [TypeScript SDK](/client/SDK.md)
 - [Tiny encrypted curl helper](/client/41d.js)
 - Local payload crypto scripts: [TypeScript](/client/crypto.ts), [Python](/client/crypto.py), [bash](/client/crypto.sh)

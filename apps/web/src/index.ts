@@ -94,6 +94,21 @@ app.get("/client/MCP.md", (c) =>
   }),
 );
 
+app.get("/client/mcp.json", (c) =>
+  c.json(
+    {
+      mcpServers: {
+        "41d.us": {
+          type: "http",
+          url: "https://41d.us/mcp",
+        },
+      },
+    },
+    200,
+    { "content-disposition": 'attachment; filename=".mcp.json"' },
+  ),
+);
+
 const clientFiles = [
   { path: "/client/41d.js", body: clientScript, type: "application/javascript; charset=utf-8", filename: "41d.js" },
   { path: "/client/crypto.ts", body: localCryptoTs, type: "text/plain; charset=utf-8", filename: "41d-crypto.ts" },
