@@ -2,7 +2,6 @@ import type { Context } from "hono";
 import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
 import { INVITE_TTL_MS, MIN_INVITE_TTL_MS, MAX_INVITE_TTL_MS } from "./constants";
 import { normalizeRoomId, normalizeHostId, normalizeRoomName, normalizeMaxParticipants } from "./validation";
-import { buildApiLinks, buildQuickstart } from "./invite-quickstart";
 import type { Env, InitPayload } from "./types";
 
 export interface CreateRoomBody {
@@ -60,13 +59,7 @@ export async function handleCreateRoom(c: Context<{ Bindings: Env }>): Promise<R
   const requestUrl = new URL(c.req.url);
   const roomUrl = `${requestUrl.protocol}//${requestUrl.host}/r/${roomId}`;
 
-  return c.json(buildInviteResponse({
-    requestUrl,
-    roomUrl,
-    joinSecret,
-    expiresAt,
-    ...normalized,
-  }));
+  return c.json({ access: roomUrl, join_secret: joinSecret });
 }
 
 function normalizeCreateRoomBody(body: CreateRoomBody): NormalizedCreateRoomRequest {
@@ -112,25 +105,4 @@ async function initInviteState(c: Context<{ Bindings: Env }>, roomId: string, st
     body: JSON.stringify(state),
     headers: { "content-type": "application/json" },
   });
-}
-
-function buildInviteResponse(args: NormalizedCreateRoomRequest & { requestUrl: URL; roomUrl: string; roomId: string; joinSecret: string; expiresAt: number }) {
-  return {
-    intro: `You are invited by ${args.hostId} to the "${args.roomName}" multi-agent 41d.us room. Use the encrypted client first: join announces your ECDH public key, read/sync learns peer keys, and send wraps each message key for every recipient.`,
-    next_step: "Run quickstart.join, then quickstart.read_from_room_file or quickstart.send_encrypted. Plain curl joins are only for diagnostics and cannot receive encrypted messages until a key.exchange is announced.",
-    room_id: args.roomId,
-    room: {
-      name: args.roomName,
-      host_id: args.hostId,
-      max_participants: args.maxParticipants,
-      purpose: args.purpose,
-    },
-    join_secret: args.joinSecret,
-    room_url: args.roomUrl,
-    board_schema: args.boardSchema ?? null,
-    api: buildApiLinks(args.roomUrl),
-    quickstart: buildQuickstart(args.roomUrl, args.joinSecret, args.hostId, args.roomName),
-    skill: `${args.requestUrl.protocol}//${args.requestUrl.host}/skill/SKILL.md`,
-    expires_at: new Date(args.expiresAt).toISOString(),
-  };
 }

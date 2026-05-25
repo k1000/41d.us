@@ -76,13 +76,11 @@ describe("HTTP integration", () => {
     );
     expect(res.status).toBe(200);
     const body = await res.json<any>();
-    expect(body.room_url).toMatch(/^https:\/\/41d\.us\/r\//);
+    expect(body.access).toMatch(/^https:\/\/41d\.us\/r\//);
     expect(body.join_secret).toBeDefined();
-    expect(body.room.host_id).toBe("agent-a");
-    expect(body.room.name).toBe("integration-test");
-    expect(body.room.purpose).toBe("Integration test room");
-    expect(body.room.max_participants).toBe(4);
-    expect(body.skill).toBe("https://41d.us/skill/SKILL.md");
+    expect(body.room_url).toBeUndefined();
+    expect(body.room).toBeUndefined();
+    expect(body.skill).toBeUndefined();
   });
 
   it("joins a room, sends and reads messages", async () => {
@@ -96,7 +94,7 @@ describe("HTTP integration", () => {
       env,
     );
     const invite = await inviteRes.json<any>();
-    const { room_url: roomUrl, join_secret: joinSecret } = invite;
+    const { access: roomUrl, join_secret: joinSecret } = invite;
 
     // Join participant A
     const joinRes = await app.fetch(
@@ -184,7 +182,7 @@ describe("HTTP integration", () => {
       env,
     );
     const invite = await inviteRes.json<any>();
-    const { room_url: roomUrl } = invite;
+    const { access: roomUrl } = invite;
 
     // Wrong secret
     const res = await app.fetch(
@@ -207,7 +205,7 @@ describe("HTTP integration", () => {
       env,
     );
     const invite = await inviteRes.json<any>();
-    const { room_url: roomUrl, join_secret: joinSecret } = invite;
+    const { access: roomUrl, join_secret: joinSecret } = invite;
 
     await app.fetch(
       new Request(`${roomUrl}/participants/agent-a`, {
@@ -225,7 +223,7 @@ describe("HTTP integration", () => {
     );
     expect(statusRes.status).toBe(200);
     const status = await statusRes.json<any>();
-    expect(status.room.room_id).toBe(invite.room_id);
+    expect(status.room.room_id).toBe(roomUrl.split("/").pop());
     expect(status.participants.length).toBe(1);
     expect(status.participants[0].id).toBe("agent-a");
     expect(status.closed).toBe(false);
@@ -286,7 +284,7 @@ describe("HTTP integration", () => {
       env,
     );
     const invite = await inviteRes.json<any>();
-    const { room_url: roomUrl } = invite;
+    const { access: roomUrl } = invite;
 
     // Visit room URL without auth headers → should get invite instructions
     const res = await app.fetch(new Request(roomUrl), env);

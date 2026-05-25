@@ -26,7 +26,7 @@ describe("invite instructions", () => {
 });
 
 describe("room creation", () => {
-  it("includes room access instructions in room creation responses", async () => {
+  it("returns a minimal room access handoff from room creation", async () => {
     const state = new Map<string, unknown>();
     const env = {
       RENDEZVOUS: {
@@ -41,40 +41,17 @@ describe("room creation", () => {
     };
 
     const response = await app.fetch(new Request("https://41d.us/rooms", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: "Review the Room API." }) }), env);
-    const body = (await response.json()) as {
-      intro: string; next_step: string; room_id: string; invite_id?: string;
-      room: { name: string; purpose: string; host_id: string; max_participants: number };
-      api: { events: string; status: string; close: string };
-      quickstart: Record<string, string>;
-      host_id?: string; max_participants?: number; room_url: string;
-      instructions?: string; readme?: string; skill: string;
-    };
+    const body = (await response.json()) as { access: string; join_secret: string; room?: unknown; api?: unknown; quickstart?: unknown };
 
-    expect(body.intro).toContain("invited by CalmPhoenix");
-    expect(body.room).toEqual({ name: "review room", purpose: "review room", host_id: "CalmPhoenix", max_participants: 7 });
+    expect(body).toEqual({ access: "https://41d.us/r/Review-Room-", join_secret: expect.any(String) });
+    expect(body.room).toBeUndefined();
+    expect(body.api).toBeUndefined();
+    expect(body.quickstart).toBeUndefined();
     expect(JSON.parse(String(state.get("body")))).toMatchObject({
       purpose: "review room",
       firstMessage: { text: "Review the Room API." },
     });
-    expect(body.room_id).toBe("Review-Room-");
-    expect(body.invite_id).toBeUndefined();
-    expect(body.host_id).toBeUndefined();
-    expect(body.max_participants).toBeUndefined();
-    expect(body.next_step).toContain("quickstart.join");
-    expect(body.api.events).toMatch(/\/events$/);
-    expect(body.api.status).toMatch(/\/status$/);
-    expect(body.api.close).toBe(body.room_url);
-    expect(body.quickstart.join).toContain("node - join");
-    expect(body.quickstart.join_diagnostic_only).toContain("curl -sS -X PUT");
-    expect(body.quickstart.events).toContain("curl -N");
-    expect(body.quickstart.create_room_file).toContain("node - create 'https://41d.us'");
-    expect(body.quickstart.create_room_file).toContain("> review-room.json");
-    expect(body.quickstart.send_encrypted).toContain("https://41d.us/client/41d.js");
-    expect(body.quickstart.send_local_encrypted_payload).toContain("https://41d.us/client/crypto.sh");
-    expect(body.room_url).toBe("https://41d.us/r/Review-Room-");
-    expect(body.instructions).toBeUndefined();
-    expect(body.readme).toBeUndefined();
-    expect(body.skill).toBe("https://41d.us/skill/SKILL.md");
+    expect(body.join_secret).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 });
 
@@ -106,7 +83,7 @@ describe("purpose vs first_message separation", () => {
 
     expect(initBody.purpose).toBe("Public: docs review");
     expect(initBody.firstMessage).toEqual({ text: "Internal kickoff", workflow: "claim a task" });
-    expect(response.room.purpose).toBe("Public: docs review");
+    expect(response.access).toMatch(/^https:\/\/41d\.us\/r\//);
   });
 
   it("defaults purpose to roomName when omitted, blank, or whitespace", async () => {
@@ -115,7 +92,7 @@ describe("purpose vs first_message separation", () => {
       if (purposeValue !== undefined) body.purpose = purposeValue;
       const { initBody, response } = await postRoom(body);
       expect(initBody.purpose).toBe("fallback room");
-      expect(response.room.purpose).toBe("fallback room");
+      expect(response.access).toMatch(/^https:\/\/41d\.us\/r\//);
     }
   });
 
@@ -130,7 +107,7 @@ describe("purpose vs first_message separation", () => {
       "/invites",
     );
     expect(initBody.purpose).toBe("Legacy entry");
-    expect(response.room.purpose).toBe("Legacy entry");
+    expect(response.access).toMatch(/^https:\/\/41d\.us\/r\//);
   });
 });
 

@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { cliMarkdown, clientPage, mcpMarkdown, orchestrationMarkdown, piMarkdown, sdkMarkdown } from "./client-assets";
+import { clientPage } from "./client-assets";
+import { cliMarkdown, mcpMarkdown, orchestrationMarkdown, piMarkdown, sdkMarkdown, securityMarkdown } from "./markdown-assets";
 import { clientScript } from "@41d/helper/client-script";
 import { localCryptoPy, localCryptoSh, localCryptoTs } from "@41d/helper/local-crypto-assets";
 import { respondNegotiated } from "./format";
 import { homeMarkdown, homePage } from "./html";
 import { RendezvousSession } from "./rendezvous";
-import { securityMarkdown, securityPage } from "./security";
+import { securityPage } from "./security";
 import { skillExampleMarkdown, skillMarkdown } from "@41d/skill";
 import { skillExamplePage, skillPage } from "./skill-pages";
 import { handleCreateRoom } from "./invite";

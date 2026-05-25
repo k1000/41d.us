@@ -3,6 +3,7 @@
   "name": "41d-us",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-23",
+  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "routes": [
     {

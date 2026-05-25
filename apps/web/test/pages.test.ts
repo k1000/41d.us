@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { cliMarkdown, orchestrationMarkdown, piMarkdown, sdkMarkdown } from "../src/client-assets";
+import { cliMarkdown, orchestrationMarkdown, piMarkdown, sdkMarkdown, securityMarkdown } from "../src/markdown-assets";
 import app from "../src/index";
 import { prefersMarkdown } from "../src/format";
 import { homeMarkdown, homePage } from "../src/html";
-import { securityMarkdown, securityPage } from "../src/security";
+import { securityPage } from "../src/security";
 import { skillExampleMarkdown, skillMarkdown } from "@41d/skill";
 import { skillExamplePage, skillPage } from "../src/skill-pages";
 
@@ -16,14 +16,17 @@ describe("homePage", () => {
     expect(html).toContain('href="/security">End-to-end encryption via client-side ECDH + AES-256-GCM.</a>');
     expect(html).toContain("agents from different projects, technologies, and skill sets");
     expect(html).toContain("replaces insecure ad-hoc coordination");
-    expect(html).toContain("If you were invited");
+    expect(html).toContain("Create room and invite");
+    expect(html).toContain("Action: create room");
+    expect(html).toContain("Join room &amp; participate");
+    expect(html).not.toContain("If you were invited");
     expect(html).not.toContain("Trust model");
     expect(html).toContain('href="https://www.anthropic.com/claude-code" target="_blank"');
     expect(html).toContain('href="https://openai.com/codex/" target="_blank"');
-    expect(html).toContain("Agent skill: <a href=\"https://41d.us/skill/SKILL.md\">https://41d.us/skill/SKILL.md</a>");
+    expect(html).toContain("General agent skill: <a href=\"https://41d.us/skill/SKILL.md\">https://41d.us/skill/SKILL.md</a>");
     expect(html).toContain("SDK / protocol reference: <a href=\"https://41d.us/client/SDK.md\">https://41d.us/client/SDK.md</a>");
     expect(html).not.toContain("Client code");
-    expect(html).toContain('<h2><span class="md-marker">##</span> For agents</h2>');
+    expect(html).toContain('<h2><span class="md-marker">##</span> Features</h2>');
     expect(html).toContain(".md-marker");
     expect(html).toContain("--highlight: #fff1d7");
     expect(html).toContain('<span class="md-bullet" aria-hidden="true">*</span>');
@@ -53,11 +56,20 @@ describe("homePage", () => {
     expect(markdown).toContain("[End-to-end encryption via client-side ECDH + AES-256-GCM.](/security)");
     expect(markdown).toContain("agents from different projects, technologies, and skill sets");
     expect(markdown).toContain("replaces insecure ad-hoc coordination");
-    expect(markdown).toContain("Recommended encrypted helper flow");
-    expect(markdown).toContain("./41d doctor docs-review.json agent-b");
+    expect(markdown).toContain("## Create room and invite");
+    expect(markdown).toContain("**Action: create room**");
+    expect(markdown).toContain("`docs-review.json` is the small handoff you can send as the invitation");
+    expect(markdown).toContain('"access": "https://41d.us/r/docs-review-x7k2"');
+    expect(markdown).toContain("## Join room & participate");
+    expect(markdown).toContain("./41d doctor invitation.json agent-b");
     expect(markdown).toContain("agents only need the encrypted helper or SDK");
     expect(markdown).toContain("Useful links:");
-    expect(markdown).toContain("- Agent skill: https://41d.us/skill/SKILL.md");
+    expect(markdown).toContain("## Features");
+    expect(markdown).not.toContain("## Ground rules");
+    expect(markdown).toContain("For joining:");
+    expect(markdown).toContain("- General agent skill: https://41d.us/skill/SKILL.md");
+    expect(markdown).toContain("For specific agent harnesses:");
+    expect(markdown).toContain("For implementers:");
     expect(markdown).toContain("- SDK / protocol reference: https://41d.us/client/SDK.md");
     expect(markdown).not.toContain("## Client code");
     expect(markdown).not.toContain("https://41d.us/client/agent.py");
@@ -110,7 +122,8 @@ describe("public client assets", () => {
   it("serves SDK docs content", () => {
     expect(sdkMarkdown).toContain("collab space");
     expect(sdkMarkdown).toContain("ORCHESTRATION.md");
-    expect(sdkMarkdown).toContain("node - doctor docs-review.json agent-b");
+    expect(sdkMarkdown).toContain("node - doctor invitation.json agent-b");
+    expect(sdkMarkdown).toContain('"access": "https://41d.us/r/docs-review-x7k2"');
     expect(sdkMarkdown).toContain("/client/crypto.ts");
     expect(orchestrationMarkdown).toContain("reservation.claim");
     expect(orchestrationMarkdown).toContain("review.result");

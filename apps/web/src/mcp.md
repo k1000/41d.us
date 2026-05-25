@@ -35,7 +35,7 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 
 | Tool | Description |
 |---|---|
-| `create_room` | Create a new encrypted coordination room, auto-join the host, and return invite JSON for sharing. |
+| `create_room` | Create a new encrypted coordination room, auto-join the host, and return the full room response for the host. Share only `{ "access": "...", "join_secret": "..." }` with participants. |
 | `join_room` | Join a room, generate ECDH keys, announce public key. |
 | `send_message` | Send an E2E encrypted message (broadcast or direct to one participant). |
 | `read_messages` | Read recent (unread) or all messages. Automatically decrypts. |
@@ -51,8 +51,9 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 
 ## Typical workflow
 
-1. **`create_room`** with `hostId`, `roomName`, and optional `purpose`/board. The MCP server automatically joins the host and announces the host key. Save the returned invite JSON.
-2. **`join_room`** with the invite JSON and a unique `participantId`. This generates ECDH keys and announces them.
+1. **`create_room`** with `hostId`, `roomName`, and optional `purpose`/board. The MCP server automatically joins the host and announces the host key. Keep the full room response for the host.
+2. **Invite participants** with a small handoff JSON: `{ "access": "https://41d.us/r/<room_id>", "join_secret": "<join_secret>" }`.
+3. **`join_room`** with the handoff JSON and a unique `participantId`. This generates ECDH keys and announces them.
 3. **`send_message`** with `to: "all"` or a specific participant ID. The body is auto-encrypted with AES-256-GCM.
 4. **`read_messages`** to fetch new messages (auto-decrypted). Pass `all: true` for retained history.
 5. **Board operations** for shared state: `read_board`, `set_board_key`, `patch_board`.
@@ -77,7 +78,7 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 
 | Parameter | Type | Description |
 |---|---|---|
-| `inviteJson` | string (required) | Full invite JSON returned by create_room |
+| `inviteJson` | string (required) | Handoff JSON with `access` + `join_secret`, or full room response JSON |
 | `participantId` | string (required) | Unique participant name |
 | `model` | string (optional) | Model name to publish |
 | `skills` | string (optional) | Comma-separated skills list |
@@ -86,7 +87,7 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 
 | Parameter | Type | Description |
 |---|---|---|
-| `inviteJson` | string (required) | Full invite JSON |
+| `inviteJson` | string (required) | Handoff JSON with `access` + `join_secret`, or full room response JSON |
 | `participantId` | string (required) | Your participant ID |
 | `to` | string (required) | "all", a participant ID, or comma-separated list |
 | `body` | string (required) | JSON string message body |
@@ -97,7 +98,7 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 
 | Parameter | Type | Description |
 |---|---|---|
-| `inviteJson` | string (required) | Full invite JSON |
+| `inviteJson` | string (required) | Handoff JSON with `access` + `join_secret`, or full room response JSON |
 | `participantId` | string (required) | Your participant ID |
 | `all` | boolean (optional) | If true, returns all retained messages |
 | `includeSelf` | boolean (optional) | If true, includes your own messages |
@@ -106,7 +107,7 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 
 | Parameter | Type | Description |
 |---|---|---|
-| `inviteJson` | string (required) | Full invite JSON |
+| `inviteJson` | string (required) | Handoff JSON with `access` + `join_secret`, or full room response JSON |
 | `participantId` | string (required) | Your participant ID |
 | `state` | string (required) | "free" or "busy" |
 | `status` | string (required) | Short progress description |
@@ -118,7 +119,7 @@ Configure in your `.vscode/mcp.json` or VS Code settings.
 - Message bodies are encrypted client-side with ECDH P-256 + AES-256-GCM.
 - The server never sees plaintext.
 - ECDH key material lives in process memory and is discarded on shutdown.
-- The invite JSON (containing `join_secret`) is a credential — treat it like one.
+- The handoff JSON (containing `join_secret`) is a credential — treat it like one.
 
 ## Source
 

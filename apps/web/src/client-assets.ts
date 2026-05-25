@@ -1,16 +1,4 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { renderMarkdownPage } from "./format-markdown";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-export const cliMarkdown: string = readFileSync(join(__dirname, "cli.md"), "utf-8");
-export const mcpMarkdown: string = readFileSync(join(__dirname, "mcp.md"), "utf-8");
-export const piMarkdown: string = readFileSync(join(__dirname, "pi.md"), "utf-8");
-export const sdkMarkdown: string = readFileSync(join(__dirname, "sdk.md"), "utf-8");
-export const orchestrationMarkdown: string = readFileSync(join(__dirname, "orchestration.md"), "utf-8");
 
 export function clientPage(): string {
   return renderMarkdownPage(
