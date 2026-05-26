@@ -3,6 +3,7 @@ import app from "../src/index";
 import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
 import { INVITE_TTL_MS, MAX_INVITE_TTL_MS, MIN_INVITE_TTL_MS } from "../src/constants";
 import { inviteInstructionsMarkdown } from "../src/html";
+import { encryptedPayload } from "./room/helpers";
 
 describe("invite instructions", () => {
   it("shows a direct Agent B join command", () => {
@@ -41,7 +42,8 @@ describe("room creation", () => {
       },
     };
 
-    const response = await app.fetch(new Request("https://41d.us/rooms", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: "Review the Room API." }) }), env);
+    const encrypted = encryptedPayload({ text: "Review the Room API." });
+    const response = await app.fetch(new Request("https://41d.us/rooms", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: encrypted }) }), env);
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(body.access).toBe("https://41d.us/r/Review-Room-");
@@ -56,7 +58,7 @@ describe("room creation", () => {
     expect(body.api).toBeUndefined();
     expect(JSON.parse(String(state.get("body")))).toMatchObject({
       purpose: "review room",
-      firstMessage: { text: "Review the Room API." },
+      firstMessage: encrypted,
     });
   });
 });
@@ -84,11 +86,11 @@ describe("purpose vs first_message separation", () => {
       host_id: "h",
       room_name: "review room",
       purpose: "Public: docs review",
-      first_message: { text: "Internal kickoff", workflow: "claim a task" },
+      first_message: encryptedPayload({ text: "Internal kickoff", workflow: "claim a task" }),
     });
 
     expect(initBody.purpose).toBe("Public: docs review");
-    expect(initBody.firstMessage).toEqual({ text: "Internal kickoff", workflow: "claim a task" });
+    expect(initBody.firstMessage).toEqual(encryptedPayload({ text: "Internal kickoff", workflow: "claim a task" }));
     expect(response.access).toMatch(/^https:\/\/41d\.us\/r\//);
   });
 
@@ -102,9 +104,21 @@ describe("purpose vs first_message separation", () => {
     }
   });
 
-  it("synthesizes a default first_message text from the purpose when first_message is omitted", async () => {
+  it("does not synthesize a plaintext first_message when first_message is omitted", async () => {
     const { initBody } = await postRoom({ host_id: "h", room_name: "n", purpose: "Audit the SDK" });
-    expect(initBody.firstMessage).toEqual({ text: "Room purpose: Audit the SDK" });
+    expect(initBody.firstMessage).toBeUndefined();
+  });
+
+  it("rejects plaintext first_message", async () => {
+    const env = {
+      RENDEZVOUS: {
+        idFromName: (name: string) => name,
+        get: () => ({ fetch: async () => new Response(JSON.stringify({ ok: true }), { status: 200 }) }),
+      },
+    };
+    const response = await app.fetch(new Request("https://41d.us/rooms", { method: "POST", body: JSON.stringify({ host_id: "h", first_message: { text: "plaintext" } }) }), env);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "first_message must be encrypted" });
   });
 
   it("accepts POST /invites as a backward-compat alias for /rooms", async () => {

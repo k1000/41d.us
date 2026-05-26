@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   authHeaders,
   bootstrapRoom,
+  encryptedPayload,
   joinParticipant,
   type RoomFixture,
 } from "./room/helpers";
@@ -106,7 +107,7 @@ async function setBoardKey(fix: RoomFixture, participantId: string, key: string,
     new Request(`https://room${fix.roomPath}/board/${key}`, {
       method: "PUT",
       headers: { ...authHeaders(fix.joinSecret, participantId), "content-type": "application/json" },
-      body: JSON.stringify(value),
+      body: JSON.stringify(encryptedPayload(value)),
     }),
   );
 }

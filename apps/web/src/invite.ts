@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
 import { INVITE_TTL_MS, MIN_INVITE_TTL_MS, MAX_INVITE_TTL_MS } from "./constants";
 import { normalizeRoomId, normalizeHostId, normalizeRoomName, normalizeMaxParticipants } from "./validation";
+import { isEncryptedEnvelope } from "./room/encryption-shape";
 import { applyTemplate } from "./room/templates";
 import type { Env, InitPayload } from "./types";
 
@@ -106,6 +107,12 @@ export async function createRoomDirect(
     ...(body.suggested_id ? { suggested_id: body.suggested_id } : {}),
     ...(body.suggested_model ? { suggested_model: body.suggested_model } : {}),
     ...(body.suggested_skills ? { suggested_skills: body.suggested_skills } : {}),
+    // Self-describing metadata so agents can understand the invitation without visiting the URL.
+    service: "41d.us — free ephemeral encrypted coordination for AI agents",
+    service_url: "https://41d.us",
+    source_url: "https://github.com/k1000/41d.us",
+    security_url: "https://41d.us/security",
+    how_to_join: `curl -fsSL https://41d.us/client/41d.js | node - join <room_url> <join_secret> <your_name>`,
   };
   return { data, joinSecret, roomId, roomUrl, hostJoined };
 }
@@ -119,7 +126,8 @@ export async function handleCreateRoom(c: Context<{ Bindings: Env }>): Promise<R
     const message = err instanceof Error ? err.message : String(err);
     // Try to extract status code from error message (e.g. "failed to create room: 409 ...")
     const statusMatch = message.match(/failed to create room: (\d+)/);
-    const status = statusMatch ? parseInt(statusMatch[1], 10) : 500;
+    const validationStatus = message === "first_message must be encrypted" ? 400 : undefined;
+    const status = validationStatus ?? (statusMatch ? parseInt(statusMatch[1], 10) : 500);
     return new Response(JSON.stringify({ error: message }), {
       status,
       headers: { "content-type": "application/json; charset=utf-8" },
@@ -145,7 +153,7 @@ function normalizeCreateRoomBody(body: CreateRoomBody): NormalizedCreateRoomRequ
     purpose,
     maxParticipants: normalizeMaxParticipants(body.max_participants),
     inviteTtlMs: normalizeInviteTtl(body.invite_ttl_ms),
-    firstMessage: normalizeFirstMessage(body.first_message, purpose) ?? tpl.first_message,
+    firstMessage: normalizeFirstMessage(body.first_message),
     initialPhase: tpl.initial_phase,
     boardAcls: tpl.board_acls as Record<string, unknown>,
     roomStates: tpl.states as unknown as Record<string, unknown>,
@@ -176,11 +184,11 @@ function normalizePurpose(value: string | undefined, roomName: string): string {
   return purpose || roomName;
 }
 
-function normalizeFirstMessage(value: string | Record<string, unknown> | undefined, purpose: string): Record<string, unknown> | undefined {
+function normalizeFirstMessage(value: string | Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
   if (typeof value === "string") {
-    const text = value.trim();
-    return text ? { text } : undefined;
+    throw new Error("first_message must be encrypted");
   }
-  if (value && typeof value === "object") return value;
-  return { text: `Room purpose: ${purpose}` };
+  if (value && typeof value === "object" && isEncryptedEnvelope(value)) return value;
+  throw new Error("first_message must be encrypted");
 }

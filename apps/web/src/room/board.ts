@@ -3,6 +3,7 @@ import { MAX_BOARD_VALUE_BYTES, sanitizeId } from "../constants";
 import { json, type GuardResult } from "../format";
 import { normalizeBoardKey, MAX_BOARD_KEY_LENGTH } from "../validation";
 import type { BoardAclRule, BoardEntry, InviteState } from "../types";
+import { isEncryptedEnvelope } from "./encryption-shape";
 
 const ENCODER = new TextEncoder();
 
@@ -12,11 +13,17 @@ function unwrapBoard(board: Record<string, BoardEntry>): Record<string, unknown>
 
 
 function makeBoardEntry(value: unknown, updatedBy: string): BoardEntry | Response {
-  const size = ENCODER.encode(JSON.stringify(value ?? null)).length;
+  if (!isEncryptedEnvelope(value)) {
+    return json({
+      error: "board value must be encrypted",
+      hint: "Encrypt board values client-side before writing them. Use an SDK encrypted body or encrypted_payload token.",
+    }, 400);
+  }
+  const size = ENCODER.encode(JSON.stringify(value)).length;
   if (size > MAX_BOARD_VALUE_BYTES) {
     return json({ error: "board value too large", max_bytes: MAX_BOARD_VALUE_BYTES }, 413);
   }
-  return { value: value ?? null, updated_by: updatedBy, updated_at: new Date().toISOString() };
+  return { value, updated_by: updatedBy, updated_at: new Date().toISOString() };
 }
 
 export function getBoard(invite: InviteState): Response {
@@ -121,13 +128,15 @@ export function deleteBoardKeyData(
 export function wrapInitialBoard(
   initialBoard: Record<string, unknown> | undefined,
   updatedBy: string,
-): Record<string, BoardEntry> {
+): Record<string, BoardEntry> | Response {
   if (!initialBoard) return {};
   const board: Record<string, BoardEntry> = {};
   for (const [rawKey, value] of Object.entries(initialBoard)) {
     const key = sanitizeId(rawKey).slice(0, MAX_BOARD_KEY_LENGTH);
     if (!key) continue;
-    board[key] = { value, updated_by: updatedBy, updated_at: new Date().toISOString() };
+    const entry = makeBoardEntry(value, updatedBy);
+    if (entry instanceof Response) return entry;
+    board[key] = entry;
   }
   return board;
 }

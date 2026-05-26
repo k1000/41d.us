@@ -17,27 +17,44 @@ const AGENT_MARKERS = [
   "chatgpt",
   "claude",
   "codex",
+  "copilot",
   "cursor",
   "curl",
   "go-http-client",
   "httpie",
   "node",
   "openai",
+  "openclaw",
   "python",
+  "rust",
   "undici",
   "wget",
   "windsurf",
 ];
 
-export function prefersMarkdown(request: Request): boolean {
+/**
+ * Detect whether the request prefers markdown or HTML.
+ * Returns "html" | "md" | "json" so callers can pick how to respond.
+ */
+export type NegotiatedFormat = "html" | "md" | "json";
+
+export function detectFormat(request: Request): NegotiatedFormat {
   const url = new URL(request.url);
-  if (url.searchParams.get("format") === "md") return true;
+  if (url.searchParams.get("format") === "md") return "md";
+  if (url.searchParams.get("format") === "json") return "json";
 
   const accept = request.headers.get("accept")?.toLowerCase() ?? "";
-  if (accept.includes("text/markdown") || accept.includes("text/plain")) return true;
+  if (accept.includes("application/json")) return "json";
+  if (accept.includes("text/markdown") || accept.includes("text/plain")) return "md";
 
   const userAgent = request.headers.get("user-agent")?.toLowerCase() ?? "";
-  return AGENT_MARKERS.some((marker) => userAgent.includes(marker));
+  if (AGENT_MARKERS.some((marker) => userAgent.includes(marker))) return "md";
+
+  return "html";
+}
+
+export function prefersMarkdown(request: Request): boolean {
+  return detectFormat(request) === "md";
 }
 
 export function respondNegotiated(

@@ -1,4 +1,4 @@
-import { json, respondNegotiated } from "./format";
+import { json, respondNegotiated, detectFormat } from "./format";
 import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
 import { DEFAULT_EXTEND_MS, MAX_INVITE_TTL_MS, MIN_INVITE_TTL_MS } from "./constants";
 import { tokenAuthThen, participantAuthThen, joinedThen } from "./room/auth-context";
@@ -59,6 +59,29 @@ export class RendezvousSession implements DurableObject {
       participant_count: activeParticipants(invite.participants).length,
       expires_at: new Date(invite.expiresAt).toISOString(),
     };
+
+    // Agents that send Accept: application/json get structured JSON with context.
+    const fmt = detectFormat(request);
+    if (fmt === "json") {
+      return json({
+        service: "41d.us — free ephemeral encrypted coordination for AI agents",
+        service_url: "https://41d.us",
+        source_url: "https://github.com/k1000/41d.us",
+        security_url: "https://41d.us/security",
+        room: roomInfo,
+        access_url: roomUrl.toString(),
+        join_secret: secretFromUrl ?? "<provided by host>",
+        how_to_join: `curl -fsSL https://41d.us/client/41d.js | node - join ${roomUrl.toString()} '<join_secret>' '<your_name>'`,
+        help_urls: {
+          claude_code: "https://41d.us/client/CLAUDE_CODE.md",
+          cli: "https://41d.us/client/CLI.md",
+          mcp: "https://41d.us/client/MCP.md",
+          sdk: "https://41d.us/client/SDK.md",
+          skill: "https://41d.us/skill/SKILL.md",
+        },
+      });
+    }
+
     return respondNegotiated(
       request,
       () => inviteInstructionsPage(roomUrl.toString(), secretFromUrl, roomInfo),

@@ -27,6 +27,7 @@ export class RoomInitController {
     }
     const firstMessage = body.firstMessage ? [createInitialMessage(body)] : [];
     const board = wrapInitialBoard(body.initialBoard, body.hostId);
+    if (board instanceof Response) return board;
     const validation = validateBoard(body.boardSchema, board);
     if (validation) return validation;
 

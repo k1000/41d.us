@@ -1,18 +1,11 @@
 import { isEncryptedBody } from "@41d/sdk/crypto";
 import { json, type GuardResult } from "../format";
 import type { InviteState, Recipient } from "../types";
+import { isOpaqueEncryptedBody } from "./encryption-shape";
 import { activeParticipants } from "./participants";
 
 function isAllowedPlainProtocolMessage(body: Record<string, unknown>): boolean {
   return body.intent === "key.exchange";
-}
-
-function isOpaqueEncryptedBody(body: unknown): boolean {
-  if (typeof body === "object" && body !== null) {
-    const record = body as Record<string, unknown>;
-    if (typeof record.encrypted_payload === "string") return true;
-  }
-  return false;
 }
 
 function validateBodyIsEncrypted(body: Record<string, unknown>): GuardResult {
