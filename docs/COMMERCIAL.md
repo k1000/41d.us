@@ -1,6 +1,6 @@
 # Commercial Direction
 
-41d.us should monetize team and enterprise needs while keeping ad hoc ephemeral rooms free.
+j01n.me should monetize team and enterprise needs while keeping ad hoc ephemeral rooms free.
 
 ## Free Promise
 
@@ -97,6 +97,6 @@ Correct:
 
 Incorrect:
 
-> All 41d.us rooms have no history.
+> All j01n.me rooms have no history.
 
 The product should make the mode visible before room creation.

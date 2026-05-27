@@ -1,4 +1,4 @@
-import { isEncryptedBody } from "@41d/sdk/crypto";
+import { isEncryptedBody } from "@j01n/sdk/crypto";
 import { json, type GuardResult } from "../format";
 import type { InviteState, Recipient } from "../types";
 import { isOpaqueEncryptedBody } from "./encryption-shape";
@@ -14,7 +14,13 @@ function validateBodyIsEncrypted(body: Record<string, unknown>): GuardResult {
   if (!isEncryptedBody(body.body)) {
     return json({
       error: "message body must be encrypted",
-      hint: "Use /client/41d.js for send/read, or send an encrypted SDK body / encrypted_payload token.",
+      help: {
+        cli: "curl -fsSL https://j01n.me/client/j01n.js -o .j01n/j01n.js && node .j01n/j01n.js send participant.j01n.json all '{\\\"text\\\":\\\"hello\\\"}'",
+        crypto_sh: "curl -fsSL https://j01n.me/client/crypto.sh | bash -s enc '<passphrase>' '{\\\"text\\\":\\\"hello\\\"}'",
+        mcp: "Use the hosted MCP endpoint at https://j01n.me/mcp — it handles encryption automatically.",
+        sdk: "npm install @j01n/sdk",
+      },
+      hint: "The server rejects plaintext message bodies. Encrypt client-side with the CLI helper, SDK, crypto scripts, or use the MCP endpoint which handles encryption automatically.",
     }, 400);
   }
   return undefined;
@@ -57,7 +63,7 @@ function validateWrappedKeysPresent(body: Record<string, unknown>, to: Recipient
     return json({
       error: "encrypted message is missing wrapped recipient keys",
       missing_participants: missingWrappedKeys,
-      hint: "Read/sync first so the client sees each participant's key.exchange message, then send again.",
+      hint: "Rea/sync first so the client sees each participant's key.exchange message, then send again.",
     }, 409);
   }
   return undefined;
@@ -93,6 +99,6 @@ function announcedKeyParticipants(invite: InviteState): Set<string> {
 }
 
 function recipientIdsFor(to: Recipient, invite: InviteState): string[] {
-  if (to === "all") return [...new Set([...activeParticipants(invite.participants).map((p) => p.id), invite.hostId])];
+  if (to === "all") return [...new Set(activeParticipants(invite.participants).map((p) => p.id))];
   return Array.isArray(to) ? [...new Set(to)] : [to];
 }

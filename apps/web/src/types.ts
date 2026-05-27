@@ -1,9 +1,10 @@
-import type { BoardEntry, Participant, RoomMessage } from "@41d/sdk/types";
-export type { BoardEntry, Participant, RoomMessage } from "@41d/sdk/types";
-export type { Recipient } from "@41d/sdk/types";
+import type { BoardEntry, Participant, RoomMessage } from "@j01n/sdk/types";
+export type { BoardEntry, Participant, RoomMessage } from "@j01n/sdk/types";
+export type { Recipient } from "@j01n/sdk/types";
 
 export interface Env {
   RENDEZVOUS: DurableObjectNamespace;
+  ROOM_REGISTRY?: DurableObjectNamespace;
 }
 
 /** Key-level board write permission: anyone, host_only, or specific participant IDs. */
@@ -29,6 +30,7 @@ export interface InitPayload {
   hostId: string;
   roomName: string;
   purpose: string;
+  entryMessage?: string;
   maxParticipants: number;
   boardSchema?: Record<string, unknown>;
   boardAcls?: BoardAcls;
@@ -43,6 +45,17 @@ export interface InitPayload {
   roomStates?: Record<string, RoomStateConfig>;
 }
 
+/** A webhook registered for a room. */
+export interface WebhookHook {
+  id: string;
+  url: string;
+  /** Event types to trigger on: "message", "board", "participant". Default all. */
+  events?: ("message" | "board" | "participant")[];
+  created_at: string;
+  /** Optional secret to sign payloads with (future use). */
+  secret?: string;
+}
+
 export interface InviteState {
   roomId: string;
   secretHash: string;
@@ -52,6 +65,7 @@ export interface InviteState {
   hostId: string;
   roomName: string;
   purpose: string;
+  entryMessage?: string;
   maxParticipants: number;
   boardSchema?: Record<string, unknown>;
   boardAcls?: BoardAcls;
@@ -62,4 +76,6 @@ export interface InviteState {
   tokenIndex?: Record<string, string>;
   messages: RoomMessage[];
   board: Record<string, BoardEntry>;
+  /** Registered webhook hooks for event notifications. */
+  hooks?: WebhookHook[];
 }

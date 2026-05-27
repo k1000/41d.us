@@ -1,5 +1,5 @@
-// NOTE: The standalone 41d.js client (packages/helper/src/client-script.ts) has
-// an equivalent inline implementation of encryptForSend/decryptMessageBody.
+// NOTE: The standalone j01n.js client (packages/helper/src/client-script.ts) has
+// an equivalent inline implementation of encryptForSen/decryptMessageBody.
 // Keep the EncryptedBody format, key derivation, and wrapping scheme in sync.
 // See apps/web/test/crypto-primitives.test.ts for conformance tests.
 
@@ -24,10 +24,21 @@ export interface SdkCryptoSession {
   processKeyExchange(messages: RoomMessage[]): Promise<void>;
   encryptForSend(plainBody: unknown, to: Recipient): Promise<EncryptedBody>;
   decryptMessageBody(msg: RoomMessage): Promise<unknown>;
+  /** Export the ECDH keypair as JWK for persistence (survives Worker isolate recycles). */
+  exportKeyPair(): Promise<{ privateJwk: JsonWebKey; publicJwk: JsonWebKey }>;
 }
 
-export async function createSdkCryptoSession(participantId: string): Promise<SdkCryptoSession> {
-  const keyPair = await generateECDHKeyPair();
+export async function createSdkCryptoSession(
+  participantId: string,
+  privateJwk?: JsonWebKey,
+  publicJwk?: JsonWebKey,
+): Promise<SdkCryptoSession> {
+  const keyPair = privateJwk && publicJwk
+    ? {
+        privateKey: await crypto.subtle.importKey("jwk", privateJwk, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]) as CryptoKey,
+        publicKey: await crypto.subtle.importKey("jwk", publicJwk, { name: "ECDH", namedCurve: "P-256" }, true, []) as CryptoKey,
+      }
+    : await generateECDHKeyPair();
   const selfKey = await deriveSharedKey(keyPair.privateKey, keyPair.publicKey);
   const peerKeys = new Map<string, CryptoKey>();
   const sharedKeys = new Map<string, CryptoKey>();
@@ -71,11 +82,20 @@ export async function createSdkCryptoSession(participantId: string): Promise<Sdk
     return { encrypted: true, ciphertext, iv, keys };
   }
 
+  async function exportKeyPair() {
+    return {
+      privateJwk: await crypto.subtle.exportKey("jwk", keyPair.privateKey) as JsonWebKey,
+      publicJwk: await crypto.subtle.exportKey("jwk", keyPair.publicKey) as JsonWebKey,
+    };
+  }
+
   return {
     async announceKeyBody() {
       peerKeys.set(participantId, keyPair.publicKey);
       return { public_key: await exportPublicKey(keyPair.publicKey) };
     },
+
+    exportKeyPair,
 
     async processPeerKeys(peers) {
       for (const { id, public_key } of peers) {

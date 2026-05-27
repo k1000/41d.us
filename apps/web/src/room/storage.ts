@@ -1,3 +1,4 @@
+import { json } from "../format";
 import type { InviteState } from "../types";
 import { activeParticipants } from "./participants";
 
@@ -12,11 +13,29 @@ export class RoomStorage {
 
   async getValidInvite(): Promise<InviteState | Response> {
     const invite = await this.getInvite();
-    if (!invite) return new Response("invite not found", { status: 404 });
-    if (invite.phase === "closed") return new Response("room closed", { status: 410 });
+    if (!invite) {
+      return json({
+        error: "room not found",
+        reason: "room does not exist or has been deleted",
+        deleted: true,
+      }, 404);
+    }
+    if (invite.phase === "closed") {
+      return json({
+        error: "room closed",
+        reason: "room was closed by the host",
+        closed: true,
+      }, 410);
+    }
     if (Date.now() > invite.expiresAt) {
       await this.state.storage.deleteAll();
-      return new Response("invite expired", { status: 410 });
+      return json({
+        error: "room expired",
+        reason: "room invite expired and the room was deleted",
+        deleted: true,
+        expired: true,
+        expired_at: new Date(invite.expiresAt).toISOString(),
+      }, 410);
     }
     return invite;
   }

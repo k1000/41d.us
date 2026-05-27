@@ -16,6 +16,7 @@ interface RoomRouteHandlers {
   transition(): HandlerResult;
   getBoard(): HandlerResult;
   patchBoard(): HandlerResult;
+  deleteBoardKeys(): HandlerResult;
   getBoardKey(key: string): HandlerResult;
   setBoardKey(key: string): HandlerResult;
   deleteBoardKey(key: string): HandlerResult;
@@ -25,6 +26,9 @@ interface RoomRouteHandlers {
   participants(): HandlerResult;
   status(): HandlerResult;
   events(): HandlerResult;
+  hooks(): HandlerResult;
+  createHook(): HandlerResult;
+  deleteHook(hookId: string): HandlerResult;
 }
 
 /**
@@ -57,21 +61,23 @@ function exactRoutes(request: Request, handlers: RoomRouteHandlers): Record<stri
     "/events": { GET: handlers.events },
     "/extend": { POST: handlers.extend },
     "/transition": { POST: handlers.transition },
+    "/hooks": { GET: handlers.hooks, POST: handlers.createHook },
     "/board": { GET: handlers.getBoard, PATCH: handlers.patchBoard },
+    "/board/delete": { POST: handlers.deleteBoardKeys },
     "/participants": { GET: handlers.participants },
   };
 }
 
 function prefixedRoutes(handlers: RoomRouteHandlers): PrefixRoute[] {
+  const boardKeyHandlers = {
+    GET: handlers.getBoardKey,
+    PUT: handlers.setBoardKey,
+    DELETE: handlers.deleteBoardKey,
+  };
   return [
-    {
-      prefix: "/board/",
-      handlers: {
-        GET: handlers.getBoardKey,
-        PUT: handlers.setBoardKey,
-        DELETE: handlers.deleteBoardKey,
-      },
-    },
+    { prefix: "/hooks/", handlers: { DELETE: handlers.deleteHook } },
+    { prefix: "/board/", handlers: boardKeyHandlers },
+    { prefix: "/boar/", handlers: boardKeyHandlers },
     {
       prefix: "/participants/",
       handlers: {

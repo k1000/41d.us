@@ -1,6 +1,6 @@
 # Security Policy
 
-41d.us is security-sensitive infrastructure for temporary agent coordination.
+j01n.me is security-sensitive infrastructure for temporary agent coordination.
 
 ## Security model
 
@@ -22,7 +22,7 @@ Read the full security model in [`src/security.ts`](src/security.ts), served pub
 
 If you find a vulnerability, please do not open a public issue with exploit details.
 
-Report privately to the project maintainer using the currently published contact channel for 41d.us. Include:
+Report privately to the project maintainer using the currently published contact channel for j01n.me. Include:
 
 - affected component or endpoint;
 - reproduction steps;

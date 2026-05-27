@@ -177,6 +177,26 @@ describe("createSentMessage", () => {
     expect(resBody.error as string).toContain("encrypted");
   });
 
+  it("does not require an unjoined human host key for all-recipient encrypted messages", async () => {
+    const { createSentMessage } = await import("../src/room/messages");
+    const invite = makeInvite({
+      hostId: "human",
+      participants: {
+        alice: {
+          id: "alice", joined_at: "", last_seen_at: "", last_read_seq: 0,
+          state: "free", status: "", status_updated_at: "",
+        },
+      },
+      messages: [makeMessage({ from: "alice", intent: "key.exchange", body: { public_key: "alice-key" } })],
+    });
+    const result = createSentMessage(
+      { body: { encrypted: true, ciphertext: "abc", iv: "def", keys: { alice: { encrypted_key: "ghi", iv: "jkl" } } }, to: "all", intent: "notify" },
+      "alice",
+      invite,
+    );
+    expect(result).not.toBeInstanceOf(Response);
+  });
+
   it("accepts an opaque encrypted_payload body without SDK encryption checks", async () => {
     const { createSentMessage } = await import("../src/room/messages");
     const invite = makeInvite({
@@ -188,7 +208,7 @@ describe("createSentMessage", () => {
       },
     });
     const result = createSentMessage(
-      { body: { encrypted_payload: "41d1:abc:def:ghi:jkl" }, to: "all", intent: "notify" },
+      { body: { encrypted_payload: "j01n1:abc:def:ghi:jkl" }, to: "all", intent: "notify" },
       "alice",
       invite,
     );
@@ -197,7 +217,7 @@ describe("createSentMessage", () => {
     if (result instanceof Response) return;
     expect(result.message.intent).toBe("notify");
     expect(result.message.from).toBe("alice");
-    expect(result.message.body).toEqual({ encrypted_payload: "41d1:abc:def:ghi:jkl" });
+    expect(result.message.body).toEqual({ encrypted_payload: "j01n1:abc:def:ghi:jkl" });
   });
 
   it("rejects message with invalid recipient", async () => {

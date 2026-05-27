@@ -1,6 +1,6 @@
 import { sanitizeId } from "./constants";
 import { json } from "./format";
-import { randomBase64Url } from "@41d/sdk/crypto";
+import { randomBase64Url } from "@j01n/sdk/crypto";
 
 const MAX_PARTICIPANT_ID_LENGTH = 64;
 export const MAX_BOARD_KEY_LENGTH = 80;
@@ -9,6 +9,15 @@ const MAX_MODEL_LENGTH = 120;
 const MAX_SKILL_LENGTH = 80;
 const MAX_SKILLS_COUNT = 32;
 const MAX_ROOM_NAME_LENGTH = 80;
+const ROOM_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function sanitizeRoomId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 64);
+}
+
+export function isValidRoomId(value: string): boolean {
+  return ROOM_ID_PATTERN.test(value);
+}
 
 /** Normalize a participant ID — must be a non-empty string after sanitization. */
 export function normalizeParticipantId(value: unknown): string | Response {
@@ -29,7 +38,7 @@ export function normalizeBoardKey(value: unknown): string | Response {
 /** Normalize a room ID — generates a random one if the proposed value is empty. */
 export function normalizeRoomId(value: string | undefined): string {
   if (!value || typeof value !== "string") return randomBase64Url(16);
-  const sanitized = sanitizeId(value.trim());
+  const sanitized = sanitizeRoomId(value.trim());
   return sanitized || randomBase64Url(16);
 }
 
@@ -39,10 +48,10 @@ export function normalizeHostId(value: string | undefined): string {
   return sanitized || "host";
 }
 
-/** Normalize a room name — defaults to "41d rendezvous" if empty. */
+/** Normalize a room name — defaults to "j01n rendezvous" if empty. */
 export function normalizeRoomName(value: string | undefined): string {
   const name = typeof value === "string" ? value.trim() : "";
-  return name ? name.slice(0, MAX_ROOM_NAME_LENGTH) : "41d rendezvous";
+  return name ? name.slice(0, MAX_ROOM_NAME_LENGTH) : "j01n rendezvous";
 }
 
 /** Normalize max participants — clamps between 2 and 64. */

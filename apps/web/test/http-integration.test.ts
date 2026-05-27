@@ -1,7 +1,7 @@
 /**
  * Full-stack HTTP integration tests.
  *
- * These test the Hono app end-to-end: POST /rooms → PUT /r/:id/participants/:pid
+ * These test the Hono app end-to-end: POST /rooms → PUT /r/:i/participants/:pid
  * → POST /r/:id → GET /r/:id, through the real Hono router with a mocked
  * DurableObjectNamespace that creates real RendezvousSession instances.
  */
@@ -62,7 +62,7 @@ const env = { RENDEZVOUS: mockDurableObjectNamespace() };
 describe("HTTP integration", () => {
   it("creates an invite and gets a room URL", async () => {
     const res = await app.fetch(
-      new Request("https://41d.us/rooms", {
+      new Request("https://j01n.me/rooms", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -76,7 +76,7 @@ describe("HTTP integration", () => {
     );
     expect(res.status).toBe(200);
     const body = await res.json<any>();
-    expect(body.access).toMatch(/^https:\/\/41d\.us\/r\//);
+    expect(body.access).toMatch(/^https:\/\/j01n\.me\/r\//);
     expect(body.join_secret).toBeDefined();
     expect(body.room_url).toBeUndefined();
     expect(body.room).toBeUndefined();
@@ -86,7 +86,7 @@ describe("HTTP integration", () => {
   it("joins a room, sends and reads messages", async () => {
     // Create invite
     const inviteRes = await app.fetch(
-      new Request("https://41d.us/rooms", {
+      new Request("https://j01n.me/rooms", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ host_id: "agent-a", room_name: "chat-room", max_participants: 4 }),
@@ -109,6 +109,7 @@ describe("HTTP integration", () => {
     const joinBody = await joinRes.json<any>();
     expect(joinBody.participant_id).toBe("agent-a");
     expect(joinBody.is_host).toBe(true); // host_id is "agent-a", same as joining participant
+    const participantTokens: Record<string, string> = { "agent-a": joinBody.participant_token };
 
     // Join participant B
     const joinB = await app.fetch(
@@ -119,14 +120,14 @@ describe("HTTP integration", () => {
       env,
     );
     expect(joinB.status).toBe(200);
+    participantTokens["agent-b"] = (await joinB.json<any>()).participant_token;
 
     for (const id of ["agent-a", "agent-b"]) {
       const keyRes = await app.fetch(
         new Request(roomUrl, {
           method: "POST",
           headers: {
-            authorization: `Bearer ${joinSecret}`,
-            "x-participant-id": id,
+            authorization: `Bearer ${participantTokens[id]}`,
             "content-type": "application/json",
           },
           body: JSON.stringify({ to: "all", intent: "key.exchange", body: { public_key: `${id}-raw-key` } }),
@@ -141,8 +142,7 @@ describe("HTTP integration", () => {
       new Request(roomUrl, {
         method: "POST",
         headers: {
-          authorization: `Bearer ${joinSecret}`,
-          "x-participant-id": "agent-a",
+          authorization: `Bearer ${participantTokens["agent-a"]}`,
           "content-type": "application/json",
         },
         body: JSON.stringify({
@@ -161,7 +161,7 @@ describe("HTTP integration", () => {
     // Read as agent-b (skip room_purpose and key exchange messages)
     const readRes = await app.fetch(
       new Request(`${roomUrl}?after=1`, {
-        headers: { authorization: `Bearer ${joinSecret}`, "x-participant-id": "agent-b" },
+        headers: { authorization: `Bearer ${participantTokens["agent-b"]}` },
       }),
       env,
     );
@@ -174,7 +174,7 @@ describe("HTTP integration", () => {
 
   it("rejects bad auth on room operations", async () => {
     const inviteRes = await app.fetch(
-      new Request("https://41d.us/rooms", {
+      new Request("https://j01n.me/rooms", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ host_id: "host", room_name: "secure-room", max_participants: 4 }),
@@ -197,7 +197,7 @@ describe("HTTP integration", () => {
 
   it("returns room status and participant list", async () => {
     const inviteRes = await app.fetch(
-      new Request("https://41d.us/rooms", {
+      new Request("https://j01n.me/rooms", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ host_id: "host", room_name: "status-test", max_participants: 4 }),
@@ -207,17 +207,18 @@ describe("HTTP integration", () => {
     const invite = await inviteRes.json<any>();
     const { access: roomUrl, join_secret: joinSecret } = invite;
 
-    await app.fetch(
+    const joinRes = await app.fetch(
       new Request(`${roomUrl}/participants/agent-a`, {
         method: "PUT",
         headers: { authorization: `Bearer ${joinSecret}`, "content-type": "application/json" },
       }),
       env,
     );
+    const { participant_token: participantToken } = await joinRes.json<any>();
 
     const statusRes = await app.fetch(
       new Request(`${roomUrl}/status`, {
-        headers: { authorization: `Bearer ${joinSecret}` },
+        headers: { authorization: `Bearer ${participantToken}` },
       }),
       env,
     );
@@ -230,7 +231,7 @@ describe("HTTP integration", () => {
 
     const partRes = await app.fetch(
       new Request(`${roomUrl}/participants`, {
-        headers: { authorization: `Bearer ${joinSecret}` },
+        headers: { authorization: `Bearer ${participantToken}` },
       }),
       env,
     );
@@ -241,42 +242,47 @@ describe("HTTP integration", () => {
 
   it("serves the home page for browsers", async () => {
     const res = await app.fetch(
-      new Request("https://41d.us/", {
+      new Request("https://j01n.me/", {
         headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
       }),
     );
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).toContain("<!doctype html>");
-    expect(text).toContain("41d.us");
+    expect(text).toContain("j01n.me");
   });
 
   it("serves markdown for agents on the home page", async () => {
     const res = await app.fetch(
-      new Request("https://41d.us/", {
+      new Request("https://j01n.me/", {
         headers: { accept: "text/markdown", "user-agent": "curl/8.0" },
       }),
     );
     expect(res.status).toBe(200);
     const text = await res.text();
-    expect(text).toContain("# 41d.us");
+    expect(text).toContain("# j01n.me");
   });
 
   it("serves the security page", async () => {
-    const res = await app.fetch(new Request("https://41d.us/security"));
+    const res = await app.fetch(new Request("https://j01n.me/security"));
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).toContain("Security Model");
   });
 
   it("returns 404 for unknown routes", async () => {
-    const res = await app.fetch(new Request("https://41d.us/nonexistent"));
+    const res = await app.fetch(new Request("https://j01n.me/nonexistent"));
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects room URLs with encoded or path-problematic room id characters", async () => {
+    const res = await app.fetch(new Request("https://j01n.me/r/good-room%22"), env);
     expect(res.status).toBe(404);
   });
 
   it("returns invite instructions when visiting room URL without auth", async () => {
     const inviteRes = await app.fetch(
-      new Request("https://41d.us/rooms", {
+      new Request("https://j01n.me/rooms", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ host_id: "host", room_name: "instr-room", max_participants: 4 }),
@@ -290,6 +296,53 @@ describe("HTTP integration", () => {
     const res = await app.fetch(new Request(roomUrl), env);
     expect(res.status).toBe(200);
     const text = await res.text();
-    expect(text).toContain("41d.us invite");
+    expect(text).toContain("j01n.me invite");
+  });
+
+  describe("/room/:roomIdd", () => {
+    it("serves the browser room page when Accept: text/html", async () => {
+      const res = await app.fetch(new Request("https://j01n.me/room/abc-123", {
+        headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
+      }), env);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("[data-room-root]");
+    });
+
+    it("returns auth instructions in markdown when bot requests room without a token", async () => {
+      const res = await app.fetch(new Request("https://j01n.me/room/abc-123", {
+        headers: { accept: "text/markdown", "user-agent": "curl/8.0" },
+      }), env);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type") ?? "").toContain("text/markdown");
+      expect(await res.text()).toContain("Bearer <join_secret>");
+    });
+
+    it("renders the room as markdown for an authed bot", async () => {
+      const inviteRes = await app.fetch(new Request("https://j01n.me/rooms", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ host_id: "host", room_name: "md-room" }),
+      }), env);
+      const invite = await inviteRes.json<any>();
+      const roomId = String(invite.access).split("/r/")[1];
+      const joinRes = await app.fetch(new Request(`${invite.access}/participants/host`, {
+        method: "PUT",
+        headers: { authorization: `Bearer ${invite.join_secret}`, "content-type": "application/json" },
+      }), env);
+      const joinBody = await joinRes.json<any>();
+
+      const res = await app.fetch(new Request(`https://j01n.me/room/${roomId}`, {
+        headers: {
+          accept: "text/markdown",
+          "user-agent": "curl/8.0",
+          authorization: `Bearer ${joinBody.participant_token}`,
+        },
+      }), env);
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).toContain("# md-room");
+      expect(text).toContain("## Board");
+      expect(text).toContain("## Participants");
+    });
   });
 });

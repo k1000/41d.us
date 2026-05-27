@@ -11,19 +11,45 @@ function unwrapBoard(board: Record<string, BoardEntry>): Record<string, unknown>
   return Object.fromEntries(Object.entries(board).map(([key, entry]) => [key, entry.value]));
 }
 
+/**
+ * Unwrap a `ui:` envelope transparently. The web UI sends board values wrapped
+ * as `{ encrypted_payload: "ui:base64(...)" }`. The server unwraps them before
+ * storage so all consumers (API, CLI, SDK) see clean JSON. Existing stored
+ * wrapped values are left in place; the web UI's read-path unwrapper handles them.
+ */
+function unwrapUiEnvelope(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  const payload = record.encrypted_payload;
+  if (typeof payload !== "string" || !payload.startsWith("ui:")) return value;
+  try {
+    const base64 = payload.slice(3);
+    const json = decodeURIComponent(escape(atob(base64)));
+    return JSON.parse(json);
+  } catch {
+    return value;
+  }
+}
 
 function makeBoardEntry(value: unknown, updatedBy: string): BoardEntry | Response {
   if (!isEncryptedEnvelope(value)) {
     return json({
       error: "board value must be encrypted",
-      hint: "Encrypt board values client-side before writing them. Use an SDK encrypted body or encrypted_payload token.",
+      help: {
+        cli: "node .j01n/j01n.js send participant.j01n.json all '{\\\"text\\\":\\\"hello\\\"}'",
+        crypto_sh: "curl -fsSL https://j01n.me/client/crypto.sh | bash -s enc '<passphrase>' '{\\\"text\\\":\\\"hello\\\"}'",
+        sdk: "npm install @j01n/sdk",
+      },
+      hint: "Encrypt board values client-side before writing them. Use the CLI helper, SDK, or crypto scripts.",
     }, 400);
   }
-  const size = ENCODER.encode(JSON.stringify(value)).length;
+  // Transparently unwrap ui: envelopes so stored board values are clean JSON.
+  const cleanValue = unwrapUiEnvelope(value);
+  const size = ENCODER.encode(JSON.stringify(cleanValue)).length;
   if (size > MAX_BOARD_VALUE_BYTES) {
     return json({ error: "board value too large", max_bytes: MAX_BOARD_VALUE_BYTES }, 413);
   }
-  return { value, updated_by: updatedBy, updated_at: new Date().toISOString() };
+  return { value: cleanValue, updated_by: updatedBy, updated_at: new Date().toISOString() };
 }
 
 export function getBoard(invite: InviteState): Response {
@@ -116,13 +142,33 @@ export function deleteBoardKeyData(
 ): { board: Record<string, BoardEntry>; key: string } | Response {
   const key = normalizeBoardKey(keyFromPath);
   if (key instanceof Response) return key;
-  const aclErr = checkBoardAcl(invite, key, deletedBy);
-  if (aclErr) return aclErr;
+  const result = deleteBoardKeysData(invite, [key], deletedBy);
+  if (result instanceof Response) return result;
+  return { board: result.board, key };
+}
+
+/**
+ * Delete multiple board keys in one operation. Returns the updated board and array of deleted keys.
+ * Validates ACL for each key and schema on the resulting board.
+ */
+export function deleteBoardKeysData(
+  invite: InviteState,
+  keysFromPath: string[],
+  deletedBy: string,
+): { board: Record<string, BoardEntry>; keys: string[] } | Response {
   const board = { ...invite.board };
-  delete board[key];
+  const keys: string[] = [];
+  for (const rawKey of keysFromPath) {
+    const key = normalizeBoardKey(rawKey);
+    if (key instanceof Response) return key;
+    const aclErr = checkBoardAcl(invite, key, deletedBy);
+    if (aclErr) return aclErr;
+    delete board[key];
+    keys.push(key);
+  }
   const validation = validateBoard(invite.boardSchema, board);
   if (validation) return validation;
-  return { board, key };
+  return { board, keys };
 }
 
 export function wrapInitialBoard(

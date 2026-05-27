@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  authHeaders,
   bootstrapRoom,
   encryptedPayload,
   joinParticipant,
+  participantAuthHeaders,
   type RoomFixture,
 } from "./room/helpers";
 
@@ -36,7 +36,7 @@ async function transitionRoom(
   return fix.session.fetch(
     new Request(`https://room${fix.roomPath}/transition`, {
       method: "POST",
-      headers: { ...authHeaders(fix.joinSecret, participantId), "content-type": "application/json" },
+      headers: { ...participantAuthHeaders(fix, participantId), "content-type": "application/json" },
       body: JSON.stringify({ event }),
     }),
   );
@@ -57,7 +57,7 @@ describe("room state machine", () => {
   it("preserves the room phase when a participant joins a stateful room", async () => {
     await joinParticipant(fix, "agent-a");
     const exportRes = await fix.session.fetch(
-      new Request(`https://room${fix.roomPath}/export`, { headers: authHeaders(fix.joinSecret, "host") }),
+      new Request(`https://room${fix.roomPath}/export`, { headers: participantAuthHeaders(fix, "host") }),
     );
     const body = await exportRes.json() as { phase: string };
     expect(body.phase).toBe("active");
@@ -94,7 +94,7 @@ describe("room state machine", () => {
     const res = await fix.session.fetch(
       new Request(`https://room${fix.roomPath}/transition`, {
         method: "POST",
-        headers: { ...authHeaders(fix.joinSecret, "host"), "content-type": "application/json" },
+        headers: { ...participantAuthHeaders(fix, "host"), "content-type": "application/json" },
         body: "{}",
       }),
     );
@@ -106,7 +106,7 @@ async function setBoardKey(fix: RoomFixture, participantId: string, key: string,
   return fix.session.fetch(
     new Request(`https://room${fix.roomPath}/board/${key}`, {
       method: "PUT",
-      headers: { ...authHeaders(fix.joinSecret, participantId), "content-type": "application/json" },
+      headers: { ...participantAuthHeaders(fix, participantId), "content-type": "application/json" },
       body: JSON.stringify(encryptedPayload(value)),
     }),
   );
@@ -116,7 +116,7 @@ async function deleteBoardKey(fix: RoomFixture, participantId: string, key: stri
   return fix.session.fetch(
     new Request(`https://room${fix.roomPath}/board/${key}`, {
       method: "DELETE",
-      headers: authHeaders(fix.joinSecret, participantId),
+      headers: participantAuthHeaders(fix, participantId),
     }),
   );
 }

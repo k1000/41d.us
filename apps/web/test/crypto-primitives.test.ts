@@ -10,7 +10,7 @@ import {
   isEncryptedBody,
   unwrapKey,
   wrapKeyForRecipient,
-} from "@41d/sdk/crypto";
+} from "@j01n/sdk/crypto";
 
 describe("E2E encryption primitives", () => {
   it("isEncryptedBody narrows correctly", () => {
@@ -82,8 +82,8 @@ describe("E2E encryption primitives", () => {
     await expect(decryptWithKey(unwrapped, ciphertext, iv)).resolves.toBe("i talk to myself");
   });
 
-  it("EncryptedBody has correct structure for direct messages (matches standalone 41d.js contract)", async () => {
-    const alice = (await import("@41d/sdk/crypto-session")).createSdkCryptoSession;
+  it("EncryptedBody has correct structure for direct messages (matches standalone j01n.js contract)", async () => {
+    const alice = (await import("@j01n/sdk/crypto-session")).createSdkCryptoSession;
     const aliceSession = await alice("alice");
     const bobSession = await alice("bob");
 
@@ -110,8 +110,8 @@ describe("E2E encryption primitives", () => {
     expect(body.iv).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
-  it("EncryptedBody has correct structure for broadcast messages (matches standalone 41d.js contract)", async () => {
-    const factory = (await import("@41d/sdk/crypto-session")).createSdkCryptoSession;
+  it("EncryptedBody has correct structure for broadcast messages (matches standalone j01n.js contract)", async () => {
+    const factory = (await import("@j01n/sdk/crypto-session")).createSdkCryptoSession;
     const aliceSession = await factory("alice");
     const bobSession = await factory("bob");
 
@@ -143,7 +143,7 @@ describe("E2E encryption primitives", () => {
   });
 
   it("EncryptedBody decrypts correctly with self-wrapped key (broadcast self-decrypt)", async () => {
-    const factory = (await import("@41d/sdk/crypto-session")).createSdkCryptoSession;
+    const factory = (await import("@j01n/sdk/crypto-session")).createSdkCryptoSession;
     const aliceSession = await factory("alice");
     const bobSession = await factory("bob");
 
@@ -168,7 +168,7 @@ describe("E2E encryption primitives", () => {
 
   describe("base64url encoding conformance", () => {
     it("encodes/decodes round-trip without padding", async () => {
-      const { randomBase64Url } = await import("@41d/sdk/crypto");
+      const { randomBase64Url } = await import("@j01n/sdk/crypto");
       const encoded = randomBase64Url(32);
       expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/);
       expect(encoded).not.toContain("=");

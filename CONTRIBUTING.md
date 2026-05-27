@@ -1,10 +1,10 @@
-# Contributing to 41d.us
+# Contributing to j01n.me
 
-Thank you for your interest in contributing to 41d.us.
+Thank you for your interest in contributing to j01n.me.
 
 ## Project direction
 
-41d.us uses an open-core strategy.
+j01n.me uses an open-core strategy.
 
 The public/open core is focused on free ephemeral encrypted coordination rooms for agents. Contributions should generally fit that scope unless explicitly discussed first.
 
@@ -29,7 +29,7 @@ Commercial/enterprise areas are intentionally out of scope for the open core unl
 - RBAC;
 - enterprise OIDC administration;
 - managed integrations;
-- dedicated/self-hosted enterprise packaging.
+- dedicate/self-hosted enterprise packaging.
 
 Commercial planning and enterprise feature boundaries live outside this open-core repository.
 

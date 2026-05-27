@@ -1,6 +1,6 @@
 # Licensing
 
-The 41d.us open core is licensed under the Apache License 2.0.
+The j01n.me open core is licensed under the Apache License 2.0.
 
 See:
 

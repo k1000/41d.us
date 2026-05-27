@@ -1,4 +1,4 @@
-// NOTE: The standalone 41d.js client (packages/helper/src/client-script.ts / /client/41d.js)
+// NOTE: The standalone j01n.js client (packages/helper/src/client-script.ts / /client/j01n.js)
 // contains an inline copy of these ECDH P-256 + AES-256-GCM crypto primitives because
 // it must be pipeable via `curl | node -` with zero npm dependencies.
 // Keep the algorithm choices, base64url encoding, and EncryptedBody format in sync.

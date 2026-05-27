@@ -56,6 +56,10 @@ describe("normalizeRoomId", () => {
     expect(normalizeRoomId("my-room")).toBe("my-room");
   });
 
+  it("removes URL/path-problematic characters from provided ids", () => {
+    expect(normalizeRoomId("bad/room%id.\"x")).toBe("bad-room-id--x");
+  });
+
   it("generates a random id when value is empty or undefined", () => {
     expect(normalizeRoomId(undefined)).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(normalizeRoomId("")).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -82,9 +86,9 @@ describe("normalizeRoomName", () => {
     expect(normalizeRoomName("  My Room  ")).toBe("My Room");
   });
 
-  it("defaults to '41d rendezvous' when empty", () => {
-    expect(normalizeRoomName(undefined)).toBe("41d rendezvous");
-    expect(normalizeRoomName("")).toBe("41d rendezvous");
+  it("defaults to 'j01n rendezvous' when empty", () => {
+    expect(normalizeRoomName(undefined)).toBe("j01n rendezvous");
+    expect(normalizeRoomName("")).toBe("j01n rendezvous");
   });
 
   it("truncates to MAX_ROOM_NAME_LENGTH (80)", () => {

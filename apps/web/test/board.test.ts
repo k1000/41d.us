@@ -5,6 +5,7 @@ import {
   encryptedPayload,
   getRoomJson,
   joinParticipant,
+  participantAuthHeaders,
   type RoomFixture,
 } from "./room/helpers";
 
@@ -25,7 +26,7 @@ describe("board", () => {
     const encrypted = encryptedPayload({ "task-1": { title: "test", state: "todo" } });
     const setRes = await fix.session.fetch(new Request(`https://room${fix.roomPath}/board/tasks`, {
       method: "PUT",
-      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" },
+      headers: { ...participantAuthHeaders(fix, "agent-a"), "content-type": "application/json" },
       body: JSON.stringify(encrypted),
     }));
     const setBody = await setRes.json() as { key: string };
@@ -35,10 +36,22 @@ describe("board", () => {
     expect(body.entry.updated_by).toBe("agent-a");
   });
 
+  it("keeps the legacy /boar board-key alias", async () => {
+    const encrypted = encryptedPayload({ "task-1": { title: "legacy", state: "todo" } });
+    const setRes = await fix.session.fetch(new Request(`https://room${fix.roomPath}/boar/tasks`, {
+      method: "PUT",
+      headers: { ...participantAuthHeaders(fix, "agent-a"), "content-type": "application/json" },
+      body: JSON.stringify(encrypted),
+    }));
+    expect(setRes.status).toBe(200);
+    const body = await getRoomJson<{ key: string; entry: { value: Record<string, unknown> } }>(fix, "/boar/tasks");
+    expect(body.entry.value).toEqual(encrypted);
+  });
+
   it("rejects plaintext board values", async () => {
     const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/board/tasks`, {
       method: "PUT",
-      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" },
+      headers: { ...participantAuthHeaders(fix, "agent-a"), "content-type": "application/json" },
       body: JSON.stringify({ "task-1": { title: "test" } }),
     }));
     expect(res.status).toBe(400);
@@ -48,12 +61,12 @@ describe("board", () => {
   it("patches multiple encrypted board keys", async () => {
     const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/board`, {
       method: "PATCH",
-      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" },
+      headers: { ...participantAuthHeaders(fix, "agent-a"), "content-type": "application/json" },
       body: JSON.stringify({ kanban: encryptedPayload({ todo: [], done: [] }), decisions: encryptedPayload({ api: "REST" }) }),
     }));
     expect(res.status).toBe(200);
     const boardRes = await fix.session.fetch(new Request(`https://room${fix.roomPath}/board`, {
-      headers: { authorization: `Bearer ${fix.joinSecret}` },
+      headers: participantAuthHeaders(fix, "agent-a"),
     }));
     const boardBody = (await boardRes.json()) as { board: Record<string, unknown> };
     expect(Object.keys(boardBody.board).sort()).toEqual(["decisions", "kanban"]);
@@ -62,15 +75,15 @@ describe("board", () => {
   it("deletes a board key", async () => {
     await fix.session.fetch(new Request(`https://room${fix.roomPath}/board/tasks`, {
       method: "PUT",
-      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" },
+      headers: { ...participantAuthHeaders(fix, "agent-a"), "content-type": "application/json" },
       body: JSON.stringify(encryptedPayload({ "task-1": { title: "test" } })),
     }));
     await fix.session.fetch(new Request(`https://room${fix.roomPath}/board/tasks`, {
       method: "DELETE",
-      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a" },
+      headers: { ...participantAuthHeaders(fix, "agent-a") },
     }));
     const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/board`, {
-      headers: { authorization: `Bearer ${fix.joinSecret}` },
+      headers: participantAuthHeaders(fix, "agent-a"),
     }));
     const body = (await res.json()) as { board: Record<string, unknown> };
     expect(body.board.tasks).toBeUndefined();
@@ -89,7 +102,7 @@ describe("board", () => {
     // Valid write
     const ok = await schemaFix.session.fetch(new Request(`https://room${schemaFix.roomPath}/board/tasks`, {
       method: "PUT",
-      headers: { authorization: `Bearer ${schemaFix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" },
+      headers: { ...participantAuthHeaders(schemaFix, "agent-a"), "content-type": "application/json" },
       body: JSON.stringify(encryptedPayload({ "task-1": {} })),
     }));
     expect(ok.status).toBe(200);
@@ -97,7 +110,7 @@ describe("board", () => {
     // Invalid key (not allowed by schema)
     const bad = await schemaFix.session.fetch(new Request(`https://room${schemaFix.roomPath}/board/unknown_key`, {
       method: "PUT",
-      headers: { authorization: `Bearer ${schemaFix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" },
+      headers: { ...participantAuthHeaders(schemaFix, "agent-a"), "content-type": "application/json" },
       body: JSON.stringify(encryptedPayload({ x: 1 })),
     }));
     expect(bad.status).toBe(422);
@@ -107,7 +120,7 @@ describe("board", () => {
     const bigValue = encryptedPayload({ text: "x".repeat(MAX_BOARD_VALUE_BYTES + 1) });
     const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/board/big`, {
       method: "PUT",
-      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" },
+      headers: { ...participantAuthHeaders(fix, "agent-a"), "content-type": "application/json" },
       body: JSON.stringify(bigValue),
     }));
     expect(res.status).toBe(413);
@@ -120,7 +133,7 @@ describe("board", () => {
 
   it("returns 404 for unknown board key", async () => {
     const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/board/missing`, {
-      headers: { authorization: `Bearer ${fix.joinSecret}` },
+      headers: participantAuthHeaders(fix, "agent-a"),
     }));
     expect(res.status).toBe(404);
   });
@@ -140,7 +153,8 @@ describe("board", () => {
       hostId: "host",
       initialBoard: { decisions: encrypted },
     });
-    const body = await getRoomJson<{ board: Record<string, { value: unknown; updated_by: string }> }>(seeded, "/board");
+    await joinParticipant(seeded, "host");
+    const body = await getRoomJson<{ board: Record<string, { value: unknown; updated_by: string }> }>(seeded, "/board", "host");
     expect(body.board.decisions.value).toEqual(encrypted);
     expect(body.board.decisions.updated_by).toBe("host");
   });
@@ -153,14 +167,15 @@ describe("board", () => {
   });
 
   it("includes encrypted board state in host export", async () => {
+    await joinParticipant(fix, "host");
     const encrypted = encryptedPayload({ "task-1": { title: "exported" } });
     await fix.session.fetch(new Request(`https://room${fix.roomPath}/board/tasks`, {
       method: "PUT",
-      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "agent-a", "content-type": "application/json" },
+      headers: { ...participantAuthHeaders(fix, "agent-a"), "content-type": "application/json" },
       body: JSON.stringify(encrypted),
     }));
     const res = await fix.session.fetch(new Request(`https://room${fix.roomPath}/export`, {
-      headers: { authorization: `Bearer ${fix.joinSecret}`, "x-participant-id": "host" },
+      headers: { ...participantAuthHeaders(fix, "host") },
     }));
     const body = (await res.json()) as { board: Record<string, { value: unknown }> };
     expect(body.board.tasks.value).toEqual(encrypted);

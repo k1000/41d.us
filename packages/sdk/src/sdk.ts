@@ -11,7 +11,7 @@ import { request } from "./transport";
 export type { Invite, RoomClient, CreateRoomOptions, RoomAccess };
 
 export async function createRoom(
-  baseUrl = "https://41d.us",
+  baseUrl = "https://j01n.me",
   options: CreateRoomOptions,
 ): Promise<Invite> {
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/rooms`, {
@@ -41,7 +41,7 @@ export async function createRoom(
 }
 
 export async function createRoomAndJoin(
-  baseUrl = "https://41d.us",
+  baseUrl = "https://j01n.me",
   options: CreateRoomOptions,
 ): Promise<RoomClient> {
   // Generate ECDH keypair so the host can auto-join during room creation.
@@ -79,6 +79,7 @@ export async function joinRoom(
   interface JoinResponse {
     ok: boolean;
     cursor: number;
+    participant_token?: string;
     peers?: Array<{ id: string; public_key: string }>;
   }
   const join = await request<JoinResponse>(
@@ -95,7 +96,8 @@ export async function joinRoom(
     await cryptoSession.processPeerKeys(join.peers);
   }
 
-  const room = await buildRoomClient(invite, participantId, join.cursor, cryptoSession);
+  const roomInvite = { ...invite, participant_token: join.participant_token };
+  const room = await buildRoomClient(roomInvite, participantId, join.cursor, cryptoSession);
   return room;
 }
 

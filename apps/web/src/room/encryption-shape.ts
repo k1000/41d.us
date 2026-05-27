@@ -1,4 +1,4 @@
-import { isEncryptedBody } from "@41d/sdk/crypto";
+import { isEncryptedBody } from "@j01n/sdk/crypto";
 
 export function isOpaqueEncryptedBody(body: unknown): boolean {
   if (typeof body !== "object" || body === null) return false;

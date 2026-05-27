@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSdkCryptoSession } from "@41d/sdk/crypto-session";
+import { createSdkCryptoSession } from "@j01n/sdk/crypto-session";
 import type { RoomMessage } from "../src/types";
 
 async function exchangeKeys(...sessions: Array<{ id: string; session: Awaited<ReturnType<typeof createSdkCryptoSession>> }>): Promise<void> {

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "j01n-me": {
+      "type": "http",
+      "url": "https://j01n.me/mcp"
+    }
+  }
+}

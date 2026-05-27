@@ -7,6 +7,18 @@
 
 import type { BoardAcls, RoomStateConfig } from "../types";
 
+/** Wrap a plaintext board value as an opaque `ui:` envelope so it satisfies the encrypted-envelope check. */
+function wrapTemplateBoardValue(value: unknown): { encrypted_payload: string } {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  return { encrypted_payload: "ui:" + btoa(String.fromCharCode(...bytes)) };
+}
+
+function wrapTemplateBoard(board: Record<string, unknown>): Record<string, unknown> {
+  const wrapped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(board)) wrapped[key] = wrapTemplateBoardValue(value);
+  return wrapped;
+}
+
 export interface RoomTemplate {
   room_name: string;
   board: Record<string, unknown>;
@@ -90,7 +102,7 @@ export const ROOM_TEMPLATES: Record<string, RoomTemplate> = {
    * Default when no template is specified.
    */
   quick: {
-    room_name: "41d rendezvous",
+    room_name: "j01n rendezvous",
     board: {},
     board_acls: {},
     states: {
@@ -133,7 +145,7 @@ export function applyTemplate(
 
   const merged = {
     room_name: body.room_name ?? template.room_name,
-    board: { ...template.board, ...(body.board ?? {}) },
+    board: { ...wrapTemplateBoard(template.board), ...(body.board ?? {}) },
     board_acls: { ...template.board_acls, ...(body.board_acls ?? {}) } as BoardAcls,
     states: { ...template.states, ...(body.states ?? {}) } as Record<string, RoomStateConfig>,
   };

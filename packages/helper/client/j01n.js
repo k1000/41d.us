@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-/* 41d.us tiny encrypted client. No npm deps.
-   Create:   curl -fsSL https://41d.us/client/41d.js | node - create https://41d.us '{"host_id":"agent-a"}' > docs-review.json
-   Join:     curl -fsSL https://41d.us/client/41d.js | node - join invitation.json agent-b
-   Doctor:   curl -fsSL https://41d.us/client/41d.js | node - doctor invitation.json agent-b
-   Send:     curl -fsSL https://41d.us/client/41d.js | node - send invitation.json agent-b all '{"text":"hello"}'
-   Read:     curl -fsSL https://41d.us/client/41d.js | node - read invitation.json agent-b
-   Full:     curl -fsSL https://41d.us/client/41d.js | node - send "$ROOM_URL" "$JOIN_SECRET" "$ME" all '{"text":"hello"}'
-   Env:      ROOM_URL=... JOIN_SECRET=... ME=... ./41d send all '{"text":"hello"}'
-   Commands: create, join, send, read, inbox, doctor
+/* j01n.me tiny encrypted client. No npm deps.
+   Quick start: curl -fsSL https://j01n.me/client/j01n.js -o .j01n/j01n.js
+   Create:   node .j01n/j01n.js create '{"host_id":"agent-a"}' > docs-review.json
+   Join:     node .j01n/j01n.js join invitation.json agent-b > agent-b.j01n.json
+   Doctor:   node .j01n/j01n.js doctor agent-b.j01n.json
+   Send:     node .j01n/j01n.js send agent-b.j01n.json all '{"text":"hello"}'
+   Read:     node .j01n/j01n.js read agent-b.j01n.json
+   Full:     node .j01n/j01n.js send "$ROOM_URL" "$PARTICIPANT_TOKEN" "$ME" all '{"text":"hello"}'
+   Env:      ROOM_URL=... PARTICIPANT_TOKEN=... ME=... node .j01n/j01n.js send all '{"text":"hello"}'
+   Watch:    node .j01n/j01n.js watch agent-b.j01n.json
+   Commands: create, join, send, read, inbox, watch, doctor
 */
 const fs = await import('node:fs/promises');
 const { webcrypto } = await import('node:crypto');
@@ -18,8 +20,10 @@ const dec = new TextDecoder();
 const rawArgs = process.argv.slice(2).filter((arg, index) => index !== 0 || arg !== '--');
 const cmd = rawArgs[0];
 if (cmd === 'create') {
-  const baseUrl = (rawArgs[1] || process.env.BASE_URL || 'https://41d.us').replace(/\/$/, '');
-  const options = rawArgs[2] ? JSON.parse(rawArgs[2]) : {};
+  const hasBaseUrl = isRoomUrl(rawArgs[1]);
+  const baseUrl = ((hasBaseUrl ? rawArgs[1] : process.env.BASE_URL) || 'https://j01n.me').replace(/\/$/, '');
+  const optionsArg = hasBaseUrl ? rawArgs[2] : rawArgs[1];
+  const options = optionsArg ? JSON.parse(optionsArg) : {};
   const r = await fetch(baseUrl + '/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(options) });
   const text = await r.text();
   if (!r.ok) die(text);
@@ -31,9 +35,9 @@ const roomUrl = resolved.roomUrl;
 const joinSecret = resolved.joinSecret;
 const me = resolved.me;
 const rest = resolved.rest;
-if (!cmd || !roomUrl || !joinSecret || !me) die('usage: 41d <create|join|send|read|doctor> [invitation.json me | room_url join_secret me] [to] [json_body]\nTip: set ROOM_URL, JOIN_SECRET, and ME to omit repeated args.');
-const headers = { authorization: 'Bearer ' + joinSecret, 'x-participant-id': me };
-const keyFile = '.41d-' + new URL(roomUrl).pathname.replace(/[^a-zA-Z0-9_-]/g, '_') + '-' + me.replace(/[^a-zA-Z0-9_-]/g, '_') + '.json';
+if (!cmd || !roomUrl || !joinSecret || !me) die('usage: j01n <create|join|send|read|watch|doctor> [invitation.json me | participant.j01n.json | access token me] [to] [json_body]\nTip: after join, use the participant .j01n.json profile or set ROOM_URL, PARTICIPANT_TOKEN, and ME.');
+let headers = { authorization: 'Bearer ' + joinSecret, 'x-participant-id': me };
+const keyFile = '.j01n-' + new URL(roomUrl).pathname.replace(/[^a-zA-Z0-9_-]/g, '_') + '-' + me.replace(/[^a-zA-Z0-9_-]/g, '_') + '.json';
 
 function die(message) { console.error(message); process.exit(1); }
 async function resolveRoomArgs(args) {
@@ -43,20 +47,23 @@ async function resolveRoomArgs(args) {
   return envRoomArgs(args);
 }
 function usesEnvRoom(args) { return hasEnvRoom() && isEnvShape(args[0], args.length); }
-function hasEnvRoom() { return process.env.ROOM_URL && process.env.JOIN_SECRET && process.env.ME; }
-function isEnvShape(command, argc) { return (command === 'send' && argc <= 3) || (['join', 'read', 'inbox', 'doctor'].includes(command) && argc === 1); }
+function hasEnvRoom() { return process.env.ROOM_URL && (process.env.PARTICIPANT_TOKEN || process.env.JOIN_SECRET) && process.env.ME; }
+function isEnvShape(command, argc) { return (command === 'send' && argc <= 3) || (['join', 'read', 'inbox', 'watch', 'doctor'].includes(command) && argc === 1); }
 function isRoomUrl(value) { return value && /^https?:/.test(value); }
-function envRoomArgs(args) { return { roomUrl: process.env.ROOM_URL, joinSecret: process.env.JOIN_SECRET, me: process.env.ME, rest: args.slice(1) }; }
-function urlRoomArgs(args) { return { roomUrl: args[1], joinSecret: args[2], me: args[3], rest: args.slice(4) }; }
+function envRoomArgs(args) { return { roomUrl: process.env.ROOM_URL, joinSecret: process.env.PARTICIPANT_TOKEN || process.env.JOIN_SECRET, participantToken: process.env.PARTICIPANT_TOKEN, me: process.env.ME, rest: args.slice(1) }; }
+function urlRoomArgs(args) { return { roomUrl: args[1], joinSecret: args[2], participantToken: cmd === 'join' ? undefined : args[2], me: args[3], rest: args.slice(4) }; }
 async function inviteRoomArgs(args) {
   const invite = await loadInvite(args[1]);
-  return { roomUrl: invite.room_url, joinSecret: invite.join_secret, me: args[2], rest: args.slice(3) };
+  const roomUrl = inviteUrl(invite);
+  if (!roomUrl) die('profile must include access');
+  if (invite.participant_token) return { roomUrl, joinSecret: invite.participant_token, participantToken: invite.participant_token, me: invite.participant_id || invite.me, rest: args.slice(2) };
+  if (!invite.join_secret) die('invite must include access and join_secret');
+  return { roomUrl, joinSecret: invite.join_secret, me: args[2], rest: args.slice(3) };
 }
 async function loadInvite(ref) {
   const invite = JSON.parse(await inviteText(ref));
   const roomUrl = inviteUrl(invite);
-  if (!roomUrl || !invite.join_secret) die('invite must include access (or room_url) and join_secret');
-  return { ...invite, room_url: roomUrl };
+  return { ...invite, access: roomUrl, room_url: roomUrl };
 }
 async function inviteText(ref) { return ref.trim().startsWith('{') ? ref : fs.readFile(ref, 'utf8'); }
 function inviteUrl(invite) { return invite.access || invite.follow || invite.room_url; }
@@ -80,10 +87,12 @@ async function loadState() {
     return state;
   }
 }
-async function saveState(state) { await fs.writeFile(keyFile, JSON.stringify({ privateJwk: state.privateJwk, publicJwk: state.publicJwk, peers: state.peers }, null, 2)); }
+async function saveState(state) { await fs.writeFile(keyFile, JSON.stringify({ privateJwk: state.privateJwk, publicJwk: state.publicJwk, peers: state.peers, participantToken: state.participantToken }, null, 2)); }
+function tokenHeaders(state) { return state.participantToken ? { authorization: 'Bearer ' + state.participantToken } : headers; }
+function requireParticipantToken(state) { if (!state.participantToken) die('participant token missing; run join first'); return state.participantToken; }
 async function requestJson(url, init = {}) { const r = await fetch(url, init); const text = await r.text(); let body; try { body = text ? JSON.parse(text) : {}; } catch { body = text; } return { ok: r.ok, status: r.status, body }; }
 async function announce(state) { return post({ to: 'all', intent: 'key.exchange', body: { public_key: await exportPublic(state.keyPair.publicKey) } }); }
-async function post(payload) { const r = await requestJson(roomUrl, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(payload) }); if (!r.ok) die(formatErrorBody(r.body)); return r.body; }
+async function post(payload) { const r = await requestJson(roomUrl, { method: 'POST', headers: { ...tokenHeaders(currentState), 'content-type': 'application/json' }, body: JSON.stringify(payload) }); if (!r.ok) die(formatErrorBody(r.body)); return r.body; }
 async function syncKeys(state) {
   const messages = await readAllMessages();
   rememberPeerKeys(state, messages);
@@ -91,7 +100,7 @@ async function syncKeys(state) {
   return messages;
 }
 async function readAllMessages() {
-  const r = await requestJson(roomUrl + '/?view=all&include_self=true', { headers });
+  const r = await requestJson(roomUrl + '/?view=all&include_self=true', { headers: tokenHeaders(currentState) });
   if (!r.ok) die(formatErrorBody(r.body));
   return r.body.messages || [];
 }
@@ -121,6 +130,11 @@ async function wrappedKeys(state, recipients, messageKey) {
   for (const id of new Set([...recipients, me])) keys[id] = await wrapKey(messageKey, await shared(state, id));
   return keys;
 }
+async function decryptedMessages(state, messages) {
+  const out = [];
+  for (const m of messages) out.push({ ...m, body: await decryptBody(state, m) });
+  return out;
+}
 async function decryptBody(state, msg) {
   const b = msg.body;
   if (!b?.encrypted) return b;
@@ -138,7 +152,8 @@ async function unwrapMessageKey(state, from, wrapped) {
   return subtle.importKey('raw', keyRaw, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
 }
 async function joined() {
-  const r = await requestJson(roomUrl + '/participants', { headers: { authorization: 'Bearer ' + joinSecret } });
+  if (!currentState.participantToken) return { ok: false, status: 0, participants: [] };
+  const r = await requestJson(roomUrl + '/participants', { headers: tokenHeaders(currentState) });
   if (!r.ok) return { ok: false, status: r.status, participants: [] };
   const participants = r.body.participants || [];
   return { ok: participants.some((p) => p.id === me), status: r.status, participants };
@@ -156,6 +171,61 @@ async function encryptedStats(state, messages) {
     if (!decrypted?.encrypted) stats.decryptable++;
   }
   return stats;
+}
+function messagesAfterSeq(messages, lastSeq) { return messages.filter((m) => Number(m.seq || 0) > lastSeq); }
+async function printNewMessages(state, lastSeq, event = 'message') {
+  const messages = await syncKeys(state);
+  const fresh = messagesAfterSeq(messages, lastSeq);
+  const nextSeq = Math.max(lastSeq, ...messages.map((m) => Number(m.seq || 0)));
+  if (fresh.length > 0) console.log(JSON.stringify({ event, messages: await decryptedMessages(state, fresh) }, null, 2));
+  return nextSeq;
+}
+async function printStreamedMessage(state, currentSeq, payload) {
+  const msg = payload?.message;
+  if (!msg) return printNewMessages(state, currentSeq);
+  rememberPeerKeys(state, [msg]);
+  await saveState(state);
+  const nextSeq = Math.max(currentSeq, Number(payload.last_seq || msg.seq || 0));
+  if (Number(msg.seq || 0) > currentSeq) console.log(JSON.stringify({ event: 'message', messages: await decryptedMessages(state, [msg]) }, null, 2));
+  return nextSeq;
+}
+async function watchRoom(state, lastSeq) {
+  let currentSeq = await printNewMessages(state, lastSeq, 'initial');
+  const eventsUrl = roomUrl.replace(/\/$/, '') + '/events?s=' + encodeURIComponent(requireParticipantToken(state)) + '&include_self=true';
+  const r = await fetch(eventsUrl, { headers: { accept: 'text/event-stream' } });
+  if (!r.ok || !r.body) die('watch failed: ' + r.status + ' ' + await r.text());
+  console.error('watching ' + roomUrl + ' as ' + me + '...');
+  for await (const event of sseEvents(r.body)) {
+    if (event.event === 'ping' || event.event === 'ready') continue;
+    if (event.event === 'message') currentSeq = await printStreamedMessage(state, currentSeq, event.data);
+    else if (event.event === 'changed') currentSeq = await printNewMessages(state, currentSeq);
+    else console.log(JSON.stringify(event, null, 2));
+  }
+}
+async function* sseEvents(body) {
+  let buffer = '';
+  for await (const chunk of body) {
+    buffer += dec.decode(chunk, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf('\n\n')) >= 0) {
+      const raw = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const event = parseSseEvent(raw);
+      if (event) yield event;
+    }
+  }
+}
+function parseSseEvent(raw) {
+  let event = 'message';
+  const data = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+  }
+  if (data.length === 0) return { event, data: undefined };
+  const text = data.join('\n');
+  try { return { event, data: JSON.parse(text) }; }
+  catch { return { event, data: text }; }
 }
 function doctorReport(state, joinedResult, messages, stats) {
   return {
@@ -179,8 +249,13 @@ const COMMANDS = {
   async join(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
     const r = await requestJson(roomUrl + '/participants/' + encodeURIComponent(me), { method: 'PUT', headers: { authorization: 'Bearer ' + joinSecret, 'content-type': 'application/json' }, body: JSON.stringify({ state: 'free', status: 'joined with encrypted tiny client' }) });
     if (!r.ok && r.status !== 409) die(formatErrorBody(r.body));
+    if (r.body.participant_token) {
+      state.participantToken = r.body.participant_token;
+      await saveState(state);
+    }
+    headers = tokenHeaders(state);
     await announce(state);
-    console.log(JSON.stringify({ ok: true, participant_id: me, key_file: keyFile, joined: r.status !== 409, key_warning: 'Save this key file to decrypt messages in future sessions: ' + keyFile }, null, 2));
+    console.log(JSON.stringify({ access: roomUrl, participant_id: me, participant_token: state.participantToken, key_file: keyFile }, null, 2));
   },
   async send(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
     const [to, bodyJson] = rest;
@@ -191,9 +266,12 @@ const COMMANDS = {
   },
   async read(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
     const messages = await syncKeys(state);
-    const out = [];
-    for (const m of messages) out.push({ ...m, body: await decryptBody(state, m) });
-    console.log(JSON.stringify(out, null, 2));
+    console.log(JSON.stringify(await decryptedMessages(state, messages), null, 2));
+  },
+  async watch(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
+    await announce(state).catch(() => undefined);
+    const since = Number(rest[0] || 0);
+    await watchRoom(state, Number.isFinite(since) ? since : 0);
   },
   async doctor(state, { roomUrl, joinSecret, me, rest, headers, keyFile }) {
     const j = await joined();
@@ -204,7 +282,10 @@ const COMMANDS = {
 };
 
 const handler = COMMANDS[cmd];
-if (!handler) die('unknown command: ' + cmd + '. Usage: create|join|send|read|inbox|doctor');
+if (!handler) die('unknown command: ' + cmd + '. Usage: create|join|send|read|inbox|watch|doctor');
 
 const state = await loadState();
+if (resolved.participantToken) state.participantToken = resolved.participantToken;
+let currentState = state;
+headers = tokenHeaders(state);
 await handler(state, { roomUrl, joinSecret, me, rest, headers, keyFile });

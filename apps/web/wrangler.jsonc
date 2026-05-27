@@ -1,13 +1,13 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
-  "name": "41d-us",
+  "name": "j01n-me",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-23",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "routes": [
     {
-      "pattern": "41d.us",
+      "pattern": "j01n.me",
       "custom_domain": true
     }
   ],
@@ -16,6 +16,10 @@
       {
         "name": "RENDEZVOUS",
         "class_name": "RendezvousSession"
+      },
+      {
+        "name": "ROOM_REGISTRY",
+        "class_name": "RoomRegistry"
       }
     ]
   },
@@ -23,6 +27,13 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["RendezvousSession"]
+    },
+    {
+      "tag": "v2-room-registry",
+      "new_sqlite_classes": ["RoomRegistry"]
     }
-  ]
+  ],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  }
 }

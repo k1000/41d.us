@@ -2,7 +2,7 @@ import { json } from "../format";
 import type { InviteState } from "../types";
 import { isParticipantJoined } from "./participants";
 import { normalizeParticipantId } from "../validation";
-import { hashJoinSecret } from "@41d/sdk/crypto";
+import { hashJoinSecret } from "@j01n/sdk/crypto";
 
 async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
   if (request.method === "GET" || request.method === "DELETE") return {};
@@ -23,13 +23,17 @@ export interface ParsedRequest {
 export async function parseRequest(request: Request): Promise<ParsedRequest> {
   const body = await readJsonObject(request);
   const token = tokenFromRequest(request);
-  const participantId = request.headers.get("x-participant-id") ?? undefined;
+  const url = new URL(request.url);
+  const participantId = request.headers.get("x-participant-id") ?? url.searchParams.get("participant_id") ?? undefined;
   return { body, token, participantId };
 }
 
 function tokenFromRequest(request: Request): string | undefined {
   const auth = request.headers.get("authorization") ?? "";
-  return auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  const bearer = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (bearer) return bearer;
+  const url = new URL(request.url);
+  return url.searchParams.get("s") ?? url.searchParams.get("token") ?? undefined;
 }
 
 export interface AuthSuccess {
@@ -120,7 +124,25 @@ export async function tokenAuthThen(
   const parsed = await parseRequest(request);
   const result = await authenticate(invite, parsed);
   if (result instanceof Response) return result;
+  if (!result.resolvedParticipantId) {
+    return json({ error: "participant token is required" }, 403);
+  }
   return fn();
+}
+
+/** Validate a per-participant token (not the room join_secret), then run fn with the bound participant. */
+export async function participantTokenAuthThen(
+  invite: InviteState,
+  request: Request,
+  fn: (auth: AuthSuccess) => Promise<Response>,
+): Promise<Response> {
+  const parsed = await parseRequest(request);
+  const result = await authenticate(invite, parsed);
+  if (result instanceof Response) return result;
+  if (!result.resolvedParticipantId) {
+    return json({ error: "participant token is required" }, 403);
+  }
+  return fn({ ok: true, body: parsed.body, participantId: result.resolvedParticipantId });
 }
 
 /** Validate token + participant ID (no join check), then run fn with the auth result. */
@@ -141,9 +163,9 @@ export async function joinedThen(
   request: Request,
   fn: (auth: AuthSuccess) => Promise<Response>,
 ): Promise<Response> {
-  const parsed = await parseRequest(request);
-  const auth = await authenticateParticipant(invite, parsed);
-  const joined = await requireJoined(invite, auth);
-  if (joined instanceof Response) return joined;
-  return fn(joined);
+  return participantTokenAuthThen(invite, request, async (auth) => {
+    const joined = await requireJoined(invite, auth);
+    if (joined instanceof Response) return joined;
+    return fn(joined);
+  });
 }

@@ -4,7 +4,7 @@ const command = process.argv[2];
 
 if (command === "create") {
   const hostId = process.argv[3] ?? "host";
-  const invite = await createRoom("https://41d.us", { hostId });
+  const invite = await createRoom("https://j01n.me", { hostId });
   console.log(JSON.stringify(invite, null, 2));
 } else if (command === "join") {
   const roomUrl = process.argv[3];

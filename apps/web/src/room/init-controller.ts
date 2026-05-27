@@ -2,7 +2,7 @@ import { json } from "../format";
 import type { InitPayload, InviteState } from "../types";
 import { validateBoard, wrapInitialBoard } from "./board";
 import { createInitialMessage } from "./messages";
-import { createJoinedParticipant } from "./participants";
+import { createJoinedParticipant, generateParticipantToken } from "./participants";
 import type { RoomStorage } from "./storage";
 
 export class RoomInitController {
@@ -11,17 +11,17 @@ export class RoomInitController {
   async init(request: Request): Promise<Response> {
     const body = (await request.json()) as InitPayload;
     const existing = await this.storage.getInvite();
-    const initState = this.buildState(body, existing);
-    if (initState instanceof Response) return initState;
-    await this.storage.putInvite(initState);
+    const initResult = await this.buildState(body, existing);
+    if (initResult instanceof Response) return initResult;
+    await this.storage.putInvite(initResult.state);
     await this.storage.scheduleCleanup(body.expiresAt);
-    return json({ ok: true });
+    return json({ ok: true, ...(initResult.participantToken ? { participant_token: initResult.participantToken } : {}) });
   }
 
-  private buildState(
+  private async buildState(
     body: InitPayload,
     existing: InviteState | undefined,
-  ): InviteState | Response {
+  ): Promise<{ state: InviteState; participantToken?: string } | Response> {
     if (existing && existing.phase !== "closed") {
       return json({ error: "invite already exists" }, 409);
     }
@@ -33,20 +33,27 @@ export class RoomInitController {
 
     // Auto-join the host when hostPublicKey is provided.
     const participants: Record<string, import("../types").Participant> = {};
+    let participantToken: string | undefined;
+    let tokenIndex: InviteState["tokenIndex"];
     if (body.hostPublicKey) {
+      const token = await generateParticipantToken(body.roomId, body.hostId);
+      participantToken = token.token;
+      tokenIndex = { [token.tokenOnlyHash]: body.hostId };
       participants[body.hostId] = createJoinedParticipant(body.hostId, {
         public_key: body.hostPublicKey,
         model: body.hostModel,
-      });
+      }, token.hash);
     }
 
     const { initialBoard: _ib, firstMessage: _fm, hostPublicKey: _hpk, hostModel: _hm, ...stateToStore } = body;
-    return {
+    const state = {
       ...stateToStore,
       nextSeq: firstMessage.length,
       participants,
       messages: firstMessage,
       board,
+      ...(tokenIndex ? { tokenIndex } : {}),
     } satisfies InviteState;
+    return { state, participantToken };
   }
 }

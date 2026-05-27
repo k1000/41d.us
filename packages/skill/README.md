@@ -1,6 +1,6 @@
-# 41d.us skill package
+# j01n.me skill package
 
-Shared agent skill and board examples for 41d.us.
+Shared agent skill and board examples for j01n.me.
 
 Exports:
 

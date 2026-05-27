@@ -6,8 +6,9 @@ export async function request<T>(
   invite: Invite,
   options: { method?: string; participantId?: string; body?: unknown } = {},
 ): Promise<T> {
-  const headers: Record<string, string> = { authorization: `Bearer ${invite.join_secret}` };
-  if (options.participantId) headers["x-participant-id"] = options.participantId;
+  const token = invite.participant_token ?? invite.join_secret;
+  const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+  if (options.participantId && token === invite.join_secret) headers["x-participant-id"] = options.participantId;
   const hasBody = options.body !== undefined;
   if (hasBody) headers["content-type"] = "application/json";
   const response = await fetch(url, {

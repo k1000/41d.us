@@ -1,10 +1,16 @@
 import { readFileSync } from "node:fs";
-import { buildMinimalInvite, createRoom, normalizeInvite } from "@41d/sdk";
-import { getOrCreateSession } from "@41d/sdk/session";
-import type { Invite, RoomClient } from "@41d/sdk";
+import { buildMinimalInvite, createRoom, normalizeInvite } from "@j01n/sdk";
+import { getOrCreateSession } from "@j01n/sdk/session";
+import type { Invite, RoomClient } from "@j01n/sdk";
 import { parseArgs, type ParsedArgs } from "./args";
 
 const sessions = new Map<string, RoomClient>();
+
+async function getClient(parsed: ParsedArgs): Promise<RoomClient> {
+  if (!parsed.me) throw new Error("needs: participant_id. Use join first to create a session.");
+  const invite = resolveInvite(parsed);
+  return getOrCreateSession(sessions, invite, parsed.me);
+}
 
 function loadInviteFromArg(ref: string): Invite {
   const text = ref.trim().startsWith("{") ? ref : readFileSync(ref, "utf8");
@@ -51,7 +57,7 @@ async function handleCreate(parsed: ParsedArgs): Promise<string> {
 }
 
 function createBaseUrl(parsed: ParsedArgs): string {
-  return (parsed.roomUrlOrInvite || process.env.BASE_URL || "https://41d.us").replace(/\/$/, "");
+  return (parsed.roomUrlOrInvite || process.env.BASE_URL || "https://j01n.me").replace(/\/$/, "");
 }
 
 async function handleJoin(parsed: ParsedArgs): Promise<string> {
@@ -118,6 +124,78 @@ async function handleRead(parsed: ParsedArgs, all: boolean): Promise<string> {
   return JSON.stringify(messages, null, 2);
 }
 
+async function handleBoard(parsed: ParsedArgs): Promise<string> {
+  const client = await getClient(parsed);
+  const result = await client.board();
+  return JSON.stringify(result, null, 2);
+}
+
+async function handleBoardSet(parsed: ParsedArgs): Promise<string> {
+  const client = await getClient(parsed);
+  const [key, valueJson] = parsed.rest;
+  if (!key || !valueJson) throw new Error("board_set needs: <key> <json_value>");
+  const result = await client.setBoardKey(key, JSON.parse(valueJson));
+  return JSON.stringify(result, null, 2);
+}
+
+async function handleBoardPatch(parsed: ParsedArgs): Promise<string> {
+  const client = await getClient(parsed);
+  const [valueJson] = parsed.rest;
+  if (!valueJson) throw new Error("board_patch needs: <json_values>");
+  const result = await client.patchBoard(JSON.parse(valueJson));
+  return JSON.stringify(result, null, 2);
+}
+
+async function handleBoardDelete(parsed: ParsedArgs): Promise<string> {
+  const client = await getClient(parsed);
+  const [key] = parsed.rest;
+  if (!key) throw new Error("board_delete needs: <key>");
+  const result = await client.deleteBoardKey(key);
+  return JSON.stringify(result, null, 2);
+}
+
+async function handleStatus(parsed: ParsedArgs): Promise<string> {
+  const client = await getClient(parsed);
+  const [state, status] = parsed.rest;
+  if (!state || !status) throw new Error("status needs: <free|busy> <status_text>");
+  const result = await client.updateStatus(state as "free" | "busy", status);
+  return JSON.stringify(result, null, 2);
+}
+
+async function handleLeave(parsed: ParsedArgs): Promise<string> {
+  const client = await getClient(parsed);
+  await client.leave();
+  sessions.delete(client.participantId);
+  return JSON.stringify({ ok: true, left: true });
+}
+
+async function handleClose(parsed: ParsedArgs): Promise<string> {
+  const client = await getClient(parsed);
+  const result = await client.close();
+  sessions.delete(client.participantId);
+  return JSON.stringify(result, null, 2);
+}
+
+async function handleParticipants(parsed: ParsedArgs): Promise<string> {
+  const client = await getClient(parsed);
+  const result = await client.participants();
+  return JSON.stringify(result, null, 2);
+}
+
+async function handleStatusInfo(parsed: ParsedArgs): Promise<string> {
+  const client = await getClient(parsed);
+  const result = await client.status();
+  return JSON.stringify(result, null, 2);
+}
+
+async function handleTransition(parsed: ParsedArgs): Promise<string> {
+  const client = await getClient(parsed);
+  const [event] = parsed.rest;
+  if (!event) throw new Error("transition needs: <event>");
+  const result = await client.transition(event);
+  return JSON.stringify(result, null, 2);
+}
+
 const COMMANDS: Record<string, (parsed: ParsedArgs) => Promise<string>> = {
   create: handleCreate,
   join: handleJoin,
@@ -125,9 +203,19 @@ const COMMANDS: Record<string, (parsed: ParsedArgs) => Promise<string>> = {
   read: (parsed) => handleRead(parsed, false),
   inbox: (parsed) => handleRead(parsed, true),
   doctor: handleDoctor,
+  board: handleBoard,
+  board_set: handleBoardSet,
+  board_patch: handleBoardPatch,
+  board_delete: handleBoardDelete,
+  status: handleStatus,
+  leave: handleLeave,
+  close: handleClose,
+  participants: handleParticipants,
+  room_status: handleStatusInfo,
+  transition: handleTransition,
 };
 
-export async function run41d(args: string[]): Promise<string> {
+export async function runj01n(args: string[]): Promise<string> {
   const parsed = parseArgs(args);
   const handler = COMMANDS[parsed.cmd];
   if (!handler) throw new Error(`unknown command: ${parsed.cmd}. Usage: create|join|send|read|inbox|doctor`);

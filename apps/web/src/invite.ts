@@ -1,8 +1,9 @@
 import type { Context } from "hono";
-import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
+import { hashJoinSecret, randomBase64Url } from "@j01n/sdk/crypto";
 import { INVITE_TTL_MS, MIN_INVITE_TTL_MS, MAX_INVITE_TTL_MS } from "./constants";
 import { normalizeRoomId, normalizeHostId, normalizeRoomName, normalizeMaxParticipants } from "./validation";
 import { isEncryptedEnvelope } from "./room/encryption-shape";
+import { registerRoom } from "./room/registry";
 import { applyTemplate } from "./room/templates";
 import type { Env, InitPayload } from "./types";
 
@@ -15,6 +16,7 @@ export interface CreateRoomBody {
   room_name?: string;
   max_participants?: number;
   purpose?: string;
+  entry_message?: string;
   first_message?: string | Record<string, unknown>;
   board_schema?: Record<string, unknown>;
   board_acls?: Record<string, unknown>;
@@ -32,6 +34,7 @@ export interface NormalizedCreateRoomRequest {
   hostId: string;
   roomName: string;
   purpose: string;
+  entryMessage?: string;
   maxParticipants: number;
   inviteTtlMs: number;
   initialPhase: string;
@@ -72,6 +75,7 @@ export async function createRoomDirect(
     hostId: normalized.hostId,
     roomName: normalized.roomName,
     purpose: normalized.purpose,
+    entryMessage: normalized.entryMessage,
     maxParticipants: normalized.maxParticipants,
     firstMessage: normalized.firstMessage,
     boardSchema: normalized.boardSchema,
@@ -92,6 +96,8 @@ export async function createRoomDirect(
   if (!initResponse.ok) {
     throw new Error(`failed to create room: ${initResponse.status} ${await initResponse.text()}`);
   }
+  const initBody = await initResponse.json().catch(() => ({})) as { participant_token?: string };
+  await registerRoom(env, roomId, expiresAt);
 
   const origin = new URL(baseUrl).origin;
   const roomUrl = `${origin}/r/${roomId}`;
@@ -104,15 +110,16 @@ export async function createRoomDirect(
     expires_at: new Date(expiresAt).toISOString(),
     host_joined: hostJoined,
     ...(hostJoined ? { cursor: normalized.firstMessage ? 1 : 0 } : {}),
+    ...(initBody.participant_token ? { participant_token: initBody.participant_token } : {}),
     ...(body.suggested_id ? { suggested_id: body.suggested_id } : {}),
     ...(body.suggested_model ? { suggested_model: body.suggested_model } : {}),
     ...(body.suggested_skills ? { suggested_skills: body.suggested_skills } : {}),
     // Self-describing metadata so agents can understand the invitation without visiting the URL.
-    service: "41d.us — free ephemeral encrypted coordination for AI agents",
-    service_url: "https://41d.us",
-    source_url: "https://github.com/k1000/41d.us",
-    security_url: "https://41d.us/security",
-    how_to_join: `curl -fsSL https://41d.us/client/41d.js | node - join <room_url> <join_secret> <your_name>`,
+    service: "j01n.me — free ephemeral encrypted coordination for AI agents",
+    service_url: "https://j01n.me",
+    source_url: "https://github.com/k1000/j01n.me",
+    security_url: "https://j01n.me/security",
+    how_to_join: `mkdir -p .j01n && curl -fsSL https://j01n.me/client/j01n.js -o .j01n/j01n.js && node .j01n/j01n.js join <room_url> <join_secret> <your_name>`,
   };
   return { data, joinSecret, roomId, roomUrl, hostJoined };
 }
@@ -151,6 +158,7 @@ function normalizeCreateRoomBody(body: CreateRoomBody): NormalizedCreateRoomRequ
     hostId: normalizeHostId(body.host_id),
     roomName,
     purpose,
+    entryMessage: normalizeEntryMessage(body.entry_message),
     maxParticipants: normalizeMaxParticipants(body.max_participants),
     inviteTtlMs: normalizeInviteTtl(body.invite_ttl_ms),
     firstMessage: normalizeFirstMessage(body.first_message),
@@ -184,11 +192,13 @@ function normalizePurpose(value: string | undefined, roomName: string): string {
   return purpose || roomName;
 }
 
+function normalizeEntryMessage(value: string | undefined): string | undefined {
+  const message = typeof value === "string" ? value.trim() : "";
+  return message ? message.slice(0, 2000) : undefined;
+}
+
 function normalizeFirstMessage(value: string | Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
-  if (typeof value === "string") {
-    throw new Error("first_message must be encrypted");
-  }
   if (value && typeof value === "object" && isEncryptedEnvelope(value)) return value;
   throw new Error("first_message must be encrypted");
 }

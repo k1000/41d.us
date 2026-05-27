@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRoom, createRoomAndJoin, joinRoom, resumeRoom, type Invite } from "@41d/sdk";
+import { createRoom, createRoomAndJoin, joinRoom, resumeRoom, type Invite } from "@j01n/sdk";
 
 async function withFetch<T>(impl: typeof globalThis.fetch, fn: () => Promise<T>): Promise<T> {
   const original = globalThis.fetch;
@@ -14,22 +14,22 @@ describe("SDK HTTP client", () => {
     room_id: "invite",
     room: { name: "room", purpose: "room purpose", host_id: "host", max_participants: 2 },
     join_secret: "secret",
-    room_url: "https://41d.us/r/invite",
+    room_url: "https://j01n.me/r/invite",
     api: {
-      join: "https://41d.us/r/invite/participants/{participant_id}",
-      send: "https://41d.us/r/invite",
-      read: "https://41d.us/r/invite",
-      read_all: "https://41d.us/r/invite/?view=all",
-      events: "https://41d.us/r/invite/events",
-      board: "https://41d.us/r/invite/board",
-      participants: "https://41d.us/r/invite/participants",
-      status: "https://41d.us/r/invite/status",
-      leave: "https://41d.us/r/invite/participants/{participant_id}",
-      kick: "https://41d.us/r/invite/participants/{target_id}",
-      close: "https://41d.us/r/invite",
-      export: "https://41d.us/r/invite/export",
+      join: "https://j01n.me/r/invite/participants/{participant_id}",
+      send: "https://j01n.me/r/invite",
+      read: "https://j01n.me/r/invite",
+      read_all: "https://j01n.me/r/invite/?view=all",
+      events: "https://j01n.me/r/invite/events",
+      board: "https://j01n.me/r/invite/board",
+      participants: "https://j01n.me/r/invite/participants",
+      status: "https://j01n.me/r/invite/status",
+      leave: "https://j01n.me/r/invite/participants/{participant_id}",
+      kick: "https://j01n.me/r/invite/participants/{target_id}",
+      close: "https://j01n.me/r/invite",
+      export: "https://j01n.me/r/invite/export",
     },
-    skill: "https://41d.us/skill/SKILL.md",
+    skill: "https://j01n.me/skill/SKILL.md",
     expires_at: new Date(Date.now() + 60_000).toISOString(),
   });
 
@@ -42,17 +42,17 @@ describe("SDK HTTP client", () => {
       return new Response(JSON.stringify({
         intro: "intro", next_step: "join", room_id: "invite",
         room: { name: "room", purpose: "room purpose", host_id: "host", max_participants: 2 },
-        join_secret: "secret", room_url: "https://41d.us/r/invite",
-        api: {}, skill: "https://41d.us/skill/SKILL.md",
+        join_secret: "secret", room_url: "https://j01n.me/r/invite",
+        api: {}, skill: "https://j01n.me/skill/SKILL.md",
         expires_at: new Date(Date.now() + 60_000).toISOString(),
       }), { headers: { "content-type": "application/json" } });
     }) as typeof fetch;
 
     await withFetch(impl, () =>
-      createRoom("https://41d.us/", { roomId: "room-1", hostId: "agent-a", roomName: "room", maxParticipants: 3, purpose: "test" }),
+      createRoom("https://j01n.me/", { roomId: "room-1", hostId: "agent-a", roomName: "room", maxParticipants: 3, purpose: "test" }),
     );
 
-    expect(requestUrl).toBe("https://41d.us/rooms");
+    expect(requestUrl).toBe("https://j01n.me/rooms");
     expect(requestBody).toMatchObject({ room_id: "room-1", host_id: "agent-a", room_name: "room", max_participants: 3, purpose: "test" });
   });
 
@@ -67,7 +67,7 @@ describe("SDK HTTP client", () => {
     }) as typeof fetch;
 
     const ttl = 30 * 60_000;
-    await withFetch(impl, () => createRoom("https://41d.us/", { hostId: "h", inviteTtlMs: ttl }));
+    await withFetch(impl, () => createRoom("https://j01n.me/", { hostId: "h", inviteTtlMs: ttl }));
 
     expect(requestBody.invite_ttl_ms).toBe(ttl);
   });
@@ -82,18 +82,18 @@ describe("SDK HTTP client", () => {
         return new Response(JSON.stringify({
           intro: "intro", next_step: "join", room_id: "invite",
           room: { name: "room", purpose: "room purpose", host_id: "host-a", max_participants: 2 },
-          join_secret: "secret", room_url: "https://41d.us/r/invite",
-          api: {}, skill: "https://41d.us/skill/SKILL.md",
+          join_secret: "secret", room_url: "https://j01n.me/r/invite",
+          api: {}, skill: "https://j01n.me/skill/SKILL.md",
           expires_at: new Date(Date.now() + 60_000).toISOString(),
         }), { headers: { "content-type": "application/json" } });
       }
       return new Response(JSON.stringify({ ok: true, cursor: 0 }), { headers: { "content-type": "application/json" } });
     }) as typeof fetch;
 
-    await withFetch(impl, () => createRoomAndJoin("https://41d.us/", { hostId: "host-a", roomName: "room" }));
+    await withFetch(impl, () => createRoomAndJoin("https://j01n.me/", { hostId: "host-a", roomName: "room" }));
 
-    expect(requests[0]).toMatchObject({ url: "https://41d.us/rooms", method: "POST" });
-    expect(requests[1]).toMatchObject({ url: "https://41d.us/r/invite/participants/host-a", method: "PUT" });
+    expect(requests[0]).toMatchObject({ url: "https://j01n.me/rooms", method: "POST" });
+    expect(requests[1]).toMatchObject({ url: "https://j01n.me/r/invite/participants/host-a", method: "PUT" });
     // Key is now announced in the join PUT body, not a separate POST.
     const joinBody = requests[1].body as Record<string, unknown>;
     expect(joinBody.public_key).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -110,7 +110,7 @@ describe("SDK HTTP client", () => {
     await withFetch(impl, () => joinRoom(invite, "agent-a"));
 
     // Key is now sent in the join PUT body instead of a separate POST.
-    expect(requests[0]).toMatchObject({ url: "https://41d.us/r/invite/participants/agent-a", method: "PUT" });
+    expect(requests[0]).toMatchObject({ url: "https://j01n.me/r/invite/participants/agent-a", method: "PUT" });
     const joinBody = requests[0].body as Record<string, unknown>;
     expect(joinBody.public_key).toMatch(/^[A-Za-z0-9_-]+$/);
   });
@@ -129,6 +129,7 @@ describe("SDK HTTP client", () => {
     });
 
     // joinRoom emits PUT (with public_key) before setBoardKey lands at index 1.
+    expect(requests[1].url).toBe("https://j01n.me/r/invite/board/enabled");
     expect(requests[1].init?.headers).toMatchObject({ "content-type": "application/json" });
     expect(requests[1].init?.body).toBe("false");
   });
@@ -148,8 +149,8 @@ describe("SDK HTTP client", () => {
       await room.read();
     });
 
-    expect(requests[0]).toBe("https://41d.us/r/invite/?view=all");
-    expect(requests[1]).toBe("https://41d.us/r/invite");
+    expect(requests[0]).toBe("https://j01n.me/r/invite/?view=all");
+    expect(requests[1]).toBe("https://j01n.me/r/invite");
   });
 
   it("resumeRoom skips the join PUT but builds a working client", async () => {

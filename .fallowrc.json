@@ -1,4 +1,0 @@
-{
-  "ignorePatterns": ["examples/**"],
-  "ignoreDependencies": ["@cloudflare/vitest-pool-workers"]
-}

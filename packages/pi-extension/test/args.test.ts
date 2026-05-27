@@ -3,9 +3,9 @@ import { parseArgs, splitArgs } from "../args";
 
 describe("pi-extension args", () => {
   it("parses room-url command form", () => {
-    expect(parseArgs(["send", "https://41d.us/r/room", "secret", "agent-a", "all", '{"text":"hi"}'])).toEqual({
+    expect(parseArgs(["send", "https://j01n.me/r/room", "secret", "agent-a", "all", '{"text":"hi"}'])).toEqual({
       cmd: "send",
-      roomUrlOrInvite: "https://41d.us/r/room",
+      roomUrlOrInvite: "https://j01n.me/r/room",
       joinSecret: "secret",
       me: "agent-a",
       rest: ["all", '{"text":"hi"}'],
@@ -21,14 +21,29 @@ describe("pi-extension args", () => {
     });
   });
 
+  it("defaults create to the hosted j01n.me service", () => {
+    expect(parseArgs(["create", '{"host_id":"agent-a"}'])).toEqual({
+      cmd: "create",
+      rest: ['{"host_id":"agent-a"}'],
+    });
+  });
+
+  it("still accepts an explicit create base URL", () => {
+    expect(parseArgs(["create", "http://localhost:8787", '{"host_id":"agent-a"}'])).toEqual({
+      cmd: "create",
+      roomUrlOrInvite: "http://localhost:8787",
+      rest: ['{"host_id":"agent-a"}'],
+    });
+  });
+
   it("uses env room values for compact send commands", () => {
     expect(parseArgs(["send", "all", "{}"], {
-      ROOM_URL: "https://41d.us/r/env-room",
+      ROOM_URL: "https://j01n.me/r/env-room",
       JOIN_SECRET: "env-secret",
       ME: "agent-env",
     })).toEqual({
       cmd: "send",
-      roomUrlOrInvite: "https://41d.us/r/env-room",
+      roomUrlOrInvite: "https://j01n.me/r/env-room",
       joinSecret: "env-secret",
       me: "agent-env",
       rest: ["all", "{}"],

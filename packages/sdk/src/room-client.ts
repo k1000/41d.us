@@ -61,6 +61,8 @@ export interface Invite {
   suggested_id?: string;
   suggested_model?: string;
   suggested_skills?: string[];
+  /** Per-participant token returned after join; used instead of join_secret for participant-scoped calls. */
+  participant_token?: string;
   /** When true, the host was auto-joined during room creation. */
   host_joined?: boolean;
   /** Cursor after auto-join (only when host_joined is true). */
@@ -219,6 +221,7 @@ export async function buildRoomClient(
     async leave() {
       await request(`${invite.room_url}/participants/${encodeURIComponent(participantId)}`, invite, {
         method: "DELETE",
+        participantId,
       });
     },
     async kick(targetId: string) {

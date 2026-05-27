@@ -2,6 +2,7 @@ import { json } from "../format";
 import type { InviteState, Participant } from "../types";
 import { joinedThen } from "./auth-context";
 import type { RoomEventBus } from "./events";
+import { dispatchWebhooks } from "./hooks";
 import { buildReadResponse, createSentMessage, isReadableMessage, parseReadOptions } from "./messages";
 import { parseParticipantProfile, withReadReceipt, withUpdatedParticipant } from "./participants";
 import type { RoomStorage } from "./storage";
@@ -36,7 +37,12 @@ export class RoomMessageController {
       }
 
       await this.storage.putInvite(updatedInvite);
+      if (updatedParticipant) {
+        this.events.notifyParticipant(auth.participantId, "updated", updatedParticipant);
+        dispatchWebhooks(updatedInvite, "participant", { participant_id: auth.participantId, action: "updated", participant: updatedParticipant });
+      }
       this.events.notifyMessage(result.message, result.seq);
+      dispatchWebhooks(updatedInvite, "message", { type: "message", message: result.message, last_seq: result.seq });
 
       const response: Record<string, unknown> = { ok: true, id: result.message.id, seq: result.seq };
       if (updatedParticipant) response.participant = updatedParticipant;

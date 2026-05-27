@@ -1,7 +1,7 @@
 import { json, respondNegotiated, detectFormat } from "./format";
 import { inviteInstructionsMarkdown, inviteInstructionsPage } from "./html";
 import { DEFAULT_EXTEND_MS, MAX_INVITE_TTL_MS, MIN_INVITE_TTL_MS } from "./constants";
-import { tokenAuthThen, participantAuthThen, joinedThen } from "./room/auth-context";
+import { tokenAuthThen, participantTokenAuthThen, requireJoined } from "./room/auth-context";
 import { RoomBoardController } from "./room/board-controller";
 import { RoomEvents } from "./room/events";
 import type { RoomEventBus } from "./room/events";
@@ -10,6 +10,7 @@ import { RoomInitController } from "./room/init-controller";
 import { RoomMessageController } from "./room/message-controller";
 import { activeParticipants } from "./room/participants";
 import { RoomParticipantController } from "./room/participant-controller";
+import { createHook, deleteHook } from "./room/hooks";
 import { routeRoomRequest } from "./room/router";
 import { RoomStorage } from "./room/storage";
 import type { Env, InviteState } from "./types";
@@ -38,6 +39,15 @@ export class RendezvousSession implements DurableObject {
     if (request.method === "POST" && url.pathname === "/__init") {
       return this.init.init(request);
     }
+    if (request.method === "POST" && url.pathname === "/__cleanup") {
+      return this.cleanupStaleRoom();
+    }
+    if (request.method === "POST" && url.pathname === "/__save_session") {
+      return this.handleSaveSession(request);
+    }
+    if (request.method === "GET" && url.pathname === "/__load_session") {
+      return this.handleLoadSession();
+    }
 
     const invite = await this.storage.getValidInvite();
     if (invite instanceof Response) return invite;
@@ -49,12 +59,12 @@ export class RendezvousSession implements DurableObject {
       return new Response("WebSocket transport has been removed. Use the collab space.", { status: 410 });
     }
 
-    const roomUrl = new URL(request.url);
-    roomUrl.search = "";
+    const roomUrl = url.origin + url.pathname;
     const secretFromUrl = url.searchParams.get("s") ?? undefined;
     const roomInfo = {
       name: invite.roomName,
       purpose: invite.purpose,
+      ...(invite.entryMessage ? { first_message: invite.entryMessage } : {}),
       host_id: invite.hostId,
       participant_count: activeParticipants(invite.participants).length,
       expires_at: new Date(invite.expiresAt).toISOString(),
@@ -64,37 +74,43 @@ export class RendezvousSession implements DurableObject {
     const fmt = detectFormat(request);
     if (fmt === "json") {
       return json({
-        service: "41d.us — free ephemeral encrypted coordination for AI agents",
-        service_url: "https://41d.us",
-        source_url: "https://github.com/k1000/41d.us",
-        security_url: "https://41d.us/security",
+        service: "j01n.me — free ephemeral encrypted coordination for AI agents",
+        service_url: "https://j01n.me",
+        source_url: "https://github.com/k1000/j01n.me",
+        security_url: "https://j01n.me/security",
         room: roomInfo,
-        access_url: roomUrl.toString(),
+        access_url: roomUrl,
         join_secret: secretFromUrl ?? "<provided by host>",
-        how_to_join: `curl -fsSL https://41d.us/client/41d.js | node - join ${roomUrl.toString()} '<join_secret>' '<your_name>'`,
+        how_to_join: `mkdir -p .j01n && curl -fsSL https://j01n.me/client/j01n.js -o .j01n/j01n.js && node .j01n/j01n.js join ${roomUrl} '<join_secret>' '<your_name>'`,
         help_urls: {
-          claude_code: "https://41d.us/client/CLAUDE_CODE.md",
-          cli: "https://41d.us/client/CLI.md",
-          mcp: "https://41d.us/client/MCP.md",
-          sdk: "https://41d.us/client/SDK.md",
-          skill: "https://41d.us/skill/SKILL.md",
+          claude_code: "https://j01n.me/client/CLAUDE_CODE.md",
+          cli: "https://j01n.me/client/CLI.md",
+          mcp: "https://j01n.me/client/MCP.md",
+          sdk: "https://j01n.me/client/SDK.md",
+          skill: "https://j01n.me/skill/SKILL.md",
         },
       });
     }
 
     return respondNegotiated(
       request,
-      () => inviteInstructionsPage(roomUrl.toString(), secretFromUrl, roomInfo),
-      () => inviteInstructionsMarkdown(roomUrl.toString(), secretFromUrl, roomInfo),
+      () => inviteInstructionsPage(roomUrl, secretFromUrl, roomInfo),
+      () => inviteInstructionsMarkdown(roomUrl, secretFromUrl, roomInfo),
     );
   }
 
   async alarm(): Promise<void> {
+    await this.cleanupStaleRoom();
+  }
+
+  private async cleanupStaleRoom(): Promise<Response> {
     const invite = await this.storage.getInvite();
-    if (!invite) return;
-    if (Date.now() > invite.expiresAt || activeParticipants(invite.participants).length === 0) {
+    if (!invite) return json({ ok: true, deleted: true, reason: "missing" });
+    if (Date.now() > invite.expiresAt || invite.phase === "closed" || activeParticipants(invite.participants).length === 0) {
       await this.ctx.storage.deleteAll();
+      return json({ ok: true, deleted: true });
     }
+    return json({ ok: true, deleted: false });
   }
 
   private routeRequest(
@@ -109,6 +125,7 @@ export class RendezvousSession implements DurableObject {
       export: () => this.handleExport(request, invite),
       getBoard: () => this.board.get(request, invite),
       patchBoard: () => this.board.patch(request, invite),
+      deleteBoardKeys: () => this.board.deleteKeys(request, invite),
       getBoardKey: (key) => this.board.getKey(request, invite, key),
       setBoardKey: (key) => this.board.setKey(request, invite, key),
       deleteBoardKey: (key) => this.board.deleteKey(request, invite, key),
@@ -123,14 +140,79 @@ export class RendezvousSession implements DurableObject {
       events: () => this.handleEvents(request, invite),
       extend: () => this.handleExtendTtl(request, invite),
       transition: () => this.handleTransition(request, invite),
+      hooks: () => this.handleListHooks(invite),
+      createHook: () => this.handleCreateHook(request, invite),
+      deleteHook: (hookId) => this.handleDeleteHookById(request, invite, hookId),
     });
+  }
+
+  private handleListHooks(invite: InviteState): Promise<Response> {
+    return Promise.resolve(json({ hooks: invite.hooks ?? [], room_id: invite.roomId }));
+  }
+
+  private async handleCreateHook(request: Request, invite: InviteState): Promise<Response> {
+    return participantTokenAuthThen(invite, request, async (auth) => {
+      if (auth.participantId !== invite.hostId) return json({ error: "only host can manage webhooks" }, 403);
+      const body = auth.body as { url?: string; events?: ("message" | "board" | "participant")[] };
+      const url = body.url;
+      if (!url || typeof url !== "string") return json({ error: "url is required" }, 400);
+      let parsedUrl: URL;
+      try { parsedUrl = new URL(url); } catch { return json({ error: "invalid url" }, 400); }
+      if (parsedUrl.protocol !== "https:") return json({ error: "webhook url must use https" }, 400);
+      const result = createHook(invite, url, body.events);
+      await this.storage.patchAndSave(invite, { hooks: result.hooks });
+      return json({ ok: true, hook: result.hook });
+    });
+  }
+
+  private async handleDeleteHookById(request: Request, invite: InviteState, hookId: string): Promise<Response> {
+    return participantTokenAuthThen(invite, request, async (auth) => {
+      if (auth.participantId !== invite.hostId) return json({ error: "only host can manage webhooks" }, 403);
+      const result = deleteHook(invite, hookId);
+      if (!result) return json({ error: "hook not found" }, 404);
+      await this.storage.patchAndSave(invite, { hooks: result.hooks });
+      return json({ ok: true, deleted: hookId });
+    });
+  }
+
+  /**
+   * Store MCP ECDH session data (JWK keypair + participant token) in DO storage
+   * so it survives Worker isolate recycles.
+   */
+  private async handleSaveSession(request: Request): Promise<Response> {
+    try {
+      const body = await request.json() as { participantId: string; privateJwk: unknown; publicJwk: unknown; token?: string };
+      if (!body.participantId || !body.privateJwk || !body.publicJwk) {
+        return json({ error: "participantId, privateJwk, publicJwk required" }, 400);
+      }
+      const key = `mcp_session:${body.participantId}`;
+      await this.ctx.storage.put(key, {
+        privateJwk: body.privateJwk,
+        publicJwk: body.publicJwk,
+        token: body.token,
+        saved_at: Date.now(),
+      });
+      return json({ ok: true });
+    } catch (err) {
+      return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    }
+  }
+
+  /** Load MCP ECDH session data from DO storage. */
+  private async handleLoadSession(): Promise<Response> {
+    const sessions: Record<string, { privateJwk: unknown; publicJwk: unknown; token?: string }> = {};
+    const list = await this.ctx.storage.list({ prefix: "mcp_session:" });
+    for (const [key, value] of list) {
+      sessions[key.slice("mcp_session:".length)] = value as { privateJwk: unknown; publicJwk: unknown; token?: string };
+    }
+    return json({ sessions });
   }
 
   private handleExtendTtl(
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    return participantAuthThen(invite, request, async (auth) => {
+    return participantTokenAuthThen(invite, request, async (auth) => {
       if (auth.participantId !== invite.hostId) return json({ error: "only host can extend TTL" }, 403);
 
       const rawExtend = auth.body.extend_ms as number | undefined;
@@ -155,10 +237,14 @@ export class RendezvousSession implements DurableObject {
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    return joinedThen(invite, request, async (auth) => {
-      const url = new URL(request.url);
-      const includeSelf = url.searchParams.get("include_self") === "true";
-      return this.events.subscribe(auth.participantId, includeSelf, invite.nextSeq);
+    return participantTokenAuthThen(invite, request, async (auth) => {
+      const isHost = auth.participantId === invite.hostId;
+      if (!isHost) {
+        const joined = await requireJoined(invite, auth);
+        if (joined instanceof Response) return joined;
+      }
+      const includeSelf = new URL(request.url).searchParams.get("include_self") === "true";
+      return this.events.subscribe(auth.participantId, includeSelf, invite.nextSeq, isHost);
     });
   }
 
@@ -166,7 +252,7 @@ export class RendezvousSession implements DurableObject {
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    return participantAuthThen(invite, request, async (auth) => {
+    return participantTokenAuthThen(invite, request, async (auth) => {
       const states = invite.roomStates;
       if (!states || Object.keys(states).length === 0) {
         return json({ error: "room has no state machine configured" }, 400);
@@ -247,7 +333,7 @@ export class RendezvousSession implements DurableObject {
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    return participantAuthThen(invite, request, async (auth) => {
+    return participantTokenAuthThen(invite, request, async (auth) => {
       if (auth.participantId !== invite.hostId) return json({ error: "only host can close room" }, 403);
       await this.storage.patchAndSave(invite, { phase: "closed" });
       return json({ ok: true, closed: true });
@@ -258,7 +344,7 @@ export class RendezvousSession implements DurableObject {
     request: Request,
     invite: InviteState,
   ): Promise<Response> {
-    return participantAuthThen(invite, request, async (auth) => {
+    return participantTokenAuthThen(invite, request, async (auth) => {
       if (auth.participantId !== invite.hostId) return json({ error: "only host can export room" }, 403);
       return json(roomExport(invite));
     });

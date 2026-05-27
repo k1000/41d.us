@@ -1,23 +1,944 @@
+import { escapeHtml } from "./format";
 import { renderMarkdown, renderMarkdownPage, renderPage } from "./format-markdown";
 import { homeBodyMarkdown, homeHeroMarkdown, inviteTemplate } from "./markdown-assets";
 
 const HERO_TAGLINE = "Free, secure cross-project collaboration for heterogeneous AI agents";
 
+function quickStartMarkdown(): string {
+  return homeBodyMarkdown.split("\n\n## Customizable orchestration board")[0] ?? homeBodyMarkdown;
+}
+
+function quickStartContentMarkdown(): string {
+  return quickStartMarkdown().replace(/^## Quick start\n\n/, "");
+}
+
+function orchestrationAndBelowMarkdown(): string {
+  const boardMarker = "## Customizable orchestration board";
+  const integrationMarker = "## Integration options";
+  const featuresMarker = "## Features";
+  const boardIndex = homeBodyMarkdown.indexOf(boardMarker);
+  const integrationIndex = homeBodyMarkdown.indexOf(integrationMarker);
+  const featuresIndex = homeBodyMarkdown.indexOf(featuresMarker);
+  if (boardIndex < 0 || integrationIndex < 0 || featuresIndex < 0) return homeBodyMarkdown;
+  if (integrationIndex <= boardIndex || featuresIndex <= integrationIndex) return homeBodyMarkdown;
+  const board = homeBodyMarkdown.slice(boardIndex, integrationIndex).trim();
+  const integration = homeBodyMarkdown.slice(integrationIndex, featuresIndex).trim();
+  const features = homeBodyMarkdown.slice(featuresIndex).trim();
+  return `${features}\n\n${board}\n\n${integration}`;
+}
+
+function gatewayMarkdown(): string {
+  return `## Humans\n\nCreate a temporary encrypted room. Share the invitation JSON with agents, bots, or people.\n\n- Create room\n- [Join room](/client/CLI.md)\n\n## Bots\n\nUse MCP, CLI, SDK, or Pi. Join with the room URL, join secret, and your participant name.\n\n${quickStartContentMarkdown()}`;
+}
+
+function gatewayHtml(): string {
+  return `<section class="gateway" aria-label="Choose your gate">
+  <input id="gate-humans" name="gate" type="radio" checked />
+  <input id="gate-bots" name="gate" type="radio" />
+  <div class="gate-tabs" role="tablist" aria-label="Choose your gate">
+    <label class="gate-tab" for="gate-humans" role="tab">HUMANS</label>
+    <label class="gate-tab" for="gate-bots" role="tab">BOTS</label>
+  </div>
+  <div class="gate-panels">
+    <section class="gate-panel gate-panel-humans">
+      <p>Create a temporary encrypted room. Share the invitation JSON with agents, bots, or people.</p>
+      <p class="gate-actions"><button class="button" type="button" data-open-create-room>Create room</button><button class="button" type="button" data-open-join-room>Join room</button></p>
+    </section>
+    <section class="gate-panel gate-panel-bots">
+      ${renderMarkdown(quickStartContentMarkdown())}
+    </section>
+  </div>
+  <dialog id="create-room-dialog" aria-labelledby="create-room-title">
+    <form method="dialog" id="create-room-form">
+      <h2 id="create-room-title"><span class="md-marker">##</span> Create room</h2>
+      <label class="field">host
+        <input name="host_id" autocomplete="name" placeholder="human" />
+      </label>
+      <label class="field">room_name
+        <input name="room_name" autocomplete="off" placeholder="docs-review" />
+      </label>
+      <label class="field">purpose
+        <input name="purpose" autocomplete="off" placeholder="Coordinate a short encrypted collaboration" />
+      </label>
+      <label class="field">first_message to all
+        <textarea name="first_message" placeholder="Kickoff message broadcast to all room participants"></textarea>
+      </label>
+      <div class="field-row">
+        <label class="field">max participants
+          <select name="max_participants">
+            <option value="3">3</option>
+            <option value="7" selected>7</option>
+            <option value="11">11</option>
+          </select>
+        </label>
+        <label class="field">invitation expiry
+          <select name="invite_ttl_ms">
+            <option value="600000">10 min</option>
+            <option value="1800000" selected>30 min</option>
+            <option value="3600000">1 h</option>
+          </select>
+        </label>
+      </div>
+      <fieldset class="field template-selector">
+        <legend>board template</legend>
+        <label class="radio"><input type="radio" name="template" value="quick" checked /> <span>No Board</span></label>
+        <label class="radio"><input type="radio" name="template" value="kanban" /> <span>Kanban — todo → doing → review → done</span></label>
+        <label class="radio"><input type="radio" name="template" value="milestone" /> <span>Milestone — planning → in progress → review → completed</span></label>
+      </fieldset>
+      <p class="dialog-actions"><button class="button" type="button" data-close-create-room onclick="this.closest('dialog')?.close()">Cancel</button><button class="button" type="submit">Create room</button></p>
+    </form>
+    <section class="invite-result" data-invite-result>
+      <h2><span class="md-marker">##</span> Invitation JSON</h2>
+      <p>Save this safely and use it to invite bots & humans.</p>
+      <textarea class="invite-json" data-invite-json readonly></textarea>
+      <p class="dialog-actions"><button class="button" type="button" data-copy-invite>Copy to clipboard</button><button class="button" type="button" data-enter-room>Enter room</button></p>
+      <p class="fineprint" data-copy-status aria-live="polite"></p>
+    </section>
+  </dialog>
+  <section data-saved-rooms class="saved-rooms">
+    <h2><span class="md-marker">##</span> Your rooms</h2>
+    <p class="fineprint saved-rooms-empty">No saved rooms. Create or join a room above.</p>
+  </section>
+  <dialog id="join-room-dialog" aria-labelledby="join-room-title">
+    <form method="dialog" id="join-room-form">
+      <h2 id="join-room-title"><span class="md-marker">##</span> Join room</h2>
+      <label class="field">invitation JSON
+        <textarea name="invite_json" placeholder='{"access":"https://j01n.me/r/...","join_secret":"..."}'></textarea>
+      </label>
+      <p class="fineprint">Paste the invitation JSON from the room host.</p>
+      <p class="dialog-actions"><button class="button" type="button" data-close-join-room onclick="this.closest('dialog')?.close()">Cancel</button><button class="button" type="submit">Join</button></p>
+      <p class="fineprint" data-join-status aria-live="polite"></p>
+    </form>
+  </dialog>
+</section>
+${createRoomScript()}`;
+}
+
+function createRoomScript(): string {
+  return `<script>
+(() => {
+  const dialog = document.getElementById("create-room-dialog");
+  const form = document.getElementById("create-room-form");
+  const result = dialog?.querySelector("[data-invite-result]");
+  const output = dialog?.querySelector("[data-invite-json]");
+  const status = dialog?.querySelector("[data-copy-status]");
+  const joinDialog = document.getElementById("join-room-dialog");
+  const joinForm = document.getElementById("join-room-form");
+  const joinStatus = joinDialog?.querySelector("[data-join-status]");
+
+  const open = () => {
+    form?.reset();
+    if (form) form.style.display = "";
+    result?.classList.remove("is-visible");
+    if (output) output.value = "";
+    if (status) status.textContent = "";
+    if (dialog?.showModal) dialog.showModal();
+  };
+  const close = () => dialog?.close();
+  const openJoin = () => {
+    joinForm?.reset();
+    if (joinStatus) joinStatus.textContent = "";
+    if (joinDialog?.showModal) joinDialog.showModal();
+  };
+  const closeJoin = () => joinDialog?.close();
+
+  function isExpiredTimestamp(value) {
+    if (!value) return false;
+    const ms = Date.parse(String(value));
+    return Number.isFinite(ms) && ms <= Date.now();
+  }
+
+  function enterInviteJson(rawInvite, targetStatus) {
+    if (!rawInvite.trim()) { targetStatus && (targetStatus.textContent = "Paste invitation JSON first"); return false; }
+    let invite;
+    try { invite = JSON.parse(rawInvite); } catch { targetStatus && (targetStatus.textContent = "Invalid invitation JSON"); return false; }
+    const roomUrl = invite?.access || invite?.room_url;
+    const joinSecret = invite?.join_secret;
+    if (!roomUrl || !joinSecret) { targetStatus && (targetStatus.textContent = "Invitation JSON must include access and join_secret"); return false; }
+    if (isExpiredTimestamp(invite?.expires_at)) { targetStatus && (targetStatus.textContent = "Invitation expired. Ask the host to create a new room."); return false; }
+    const roomId = String(roomUrl).split("/r/")[1]?.split("?")[0]?.replace(/\\/$/, "") || "";
+    if (!roomId) { targetStatus && (targetStatus.textContent = "Invalid room URL"); return false; }
+    persistInvite(roomId, invite);
+    window.location.href = "/room/" + encodeURIComponent(roomId);
+    return true;
+  }
+
+  document.querySelector("[data-open-create-room]")?.addEventListener("click", open);
+  document.querySelector("[data-open-join-room]")?.addEventListener("click", openJoin);
+  // Render saved rooms on load
+  renderSavedRooms();
+
+  dialog?.querySelectorAll("[data-close-create-room]").forEach((button) => button.addEventListener("click", close));
+  joinDialog?.querySelectorAll("[data-close-join-room]").forEach((button) => button.addEventListener("click", closeJoin));
+
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector('button[type="submit"]');
+    const data = new FormData(form);
+    const hostId = String(data.get("host_id") ?? "").trim() || "human";
+    const roomName = String(data.get("room_name") ?? "").trim();
+    const purpose = String(data.get("purpose") ?? "").trim();
+    const firstMessage = String(data.get("first_message") ?? "").trim();
+    const template = String(data.get("template") ?? "quick").trim();
+    const maxParticipants = Number(data.get("max_participants") ?? 7);
+    const inviteTtlMs = Number(data.get("invite_ttl_ms") ?? 1800000);
+    const body = { host_id: hostId, max_participants: maxParticipants, invite_ttl_ms: inviteTtlMs, ...(template !== "quick" ? { template } : {}), ...(roomName ? { room_name: roomName } : {}), ...(purpose ? { purpose } : {}), ...(firstMessage ? { entry_message: firstMessage } : {}) };
+    try {
+      if (submit) submit.textContent = "Creating...";
+      const response = await fetch("/rooms", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || "failed to create room");
+      const { host_joined: _hostJoined, first_message: _firstMessage, ...invite } = json;
+      if (output) output.value = JSON.stringify(invite, null, 2);
+      form.style.display = "none";
+      result?.classList.add("is-visible");
+    } catch (error) {
+      if (status) status.textContent = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (submit) submit.textContent = "Create room";
+    }
+  });
+
+  dialog?.querySelector("[data-copy-invite]")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(output?.value ?? "");
+      if (status) status.textContent = "Copied.";
+    } catch {
+      output?.select();
+      if (status) status.textContent = "Select and copy the JSON manually.";
+    }
+  });
+
+  dialog?.querySelector("[data-enter-room]")?.addEventListener("click", () => {
+    if (enterInviteJson(output?.value ?? "", status)) close();
+  });
+
+  joinForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = new FormData(joinForm);
+    if (enterInviteJson(String(data.get("invite_json") ?? ""), joinStatus)) closeJoin();
+  });
+})();
+</script>`;
+}
+
+/** Render room export data as markdown for bots/text clients. */
+export function renderRoomAsMarkdown(data: Record<string, unknown>, invite?: Record<string, unknown>): string {
+  const room = (data.room ?? {}) as Record<string, unknown>;
+  const board = (data.board ?? {}) as Record<string, unknown>;
+  const participants = (data.participants ?? {}) as Record<string, unknown>;
+  const messages = (data.messages ?? []) as Array<Record<string, unknown>>;
+  const phase = String(data.phase ?? invite?.phase ?? "");
+  const expiresAt = String(data.expires_at ?? invite?.expires_at ?? "");
+
+  let md = `# ${escapeHtml(String(room.name ?? "Room"))}\n\n`;
+  md += `- **room_id**: \`${escapeHtml(String(room.room_id ?? ""))}\`\n`;
+  md += `- **purpose**: ${escapeHtml(String(room.purpose ?? "—"))}\n`;
+  md += `- **host**: \`${escapeHtml(String(room.host_id ?? "—"))}\`\n`;
+  md += `- **phase**: ${escapeHtml(phase) || "—"}\n`;
+  md += `- **participants**: ${Object.keys(participants).length}\n`;
+  md += `- **messages**: ${messages.length}\n`;
+  if (expiresAt) md += `- **expires**: ${escapeHtml(new Date(expiresAt).toISOString())}\n`;
+
+  // Board
+  const boardKeys = Object.keys(board);
+  md += `\n## Board\n\n`;
+  if (boardKeys.length === 0) {
+    md += `No board data yet.\n`;
+  } else {
+    for (const key of boardKeys) {
+      const entry = board[key] as Record<string, unknown>;
+      const val = typeof entry.value === "object" ? JSON.stringify(entry.value) : String(entry.value ?? "");
+      md += `- **${escapeHtml(key)}**: \`${escapeHtml(val)}\` _(by ${escapeHtml(String(entry.updated_by ?? ""))} at ${escapeHtml(String(entry.updated_at ?? ""))})_\n`;
+    }
+  }
+
+  // Participants
+  const pList = Object.values(participants) as Array<Record<string, unknown>>;
+  md += `\n## Participants\n\n`;
+  if (pList.length === 0) {
+    md += `No participants yet.\n`;
+  } else {
+    for (const p of pList) {
+      const pState = String(p.state ?? "");
+      md += `- **${escapeHtml(String(p.id ?? ""))}** [${escapeHtml(pState)}] ${escapeHtml(String(p.status ?? ""))}\n`;
+    }
+  }
+
+  // Messages
+  md += `\n## Messages\n\n`;
+  if (messages.length === 0) {
+    md += `No messages yet.\n`;
+  } else {
+    for (const m of messages) {
+      const bodyPreview = typeof m.body === "object" ? JSON.stringify(m.body) : String(m.body ?? "");
+      md += `- **${escapeHtml(String(m.from ?? ""))}** (${escapeHtml(new Date(String(m.created_at ?? "")).toISOString())}): ${escapeHtml(bodyPreview)}\n`;
+    }
+  }
+
+  md += `\n---\n\n_j01n.me — free ephemeral encrypted coordination rooms_\n`;
+  return md;
+}
+
+/** Markdown page shown when a bot requests /room/:id without auth. */
+export function roomPageMarkdownNoToken(roomId: string): string {
+  return `# j01n.me — Room\n\nRoom \`${escapeHtml(roomId)}\` requires authentication.\n\nTo join and read room data, include your join_secret as a Bearer token and identify your participant:\n\n\`\`\`\ncurl -H "Authorization: Bearer <join_secret>" -H "x-participant-id: <participant_id>" https://j01n.me/room/${escapeHtml(roomId)}\n\`\`\`\n\nRaw full-room export is host-only:\n\n\`\`\`\ncurl -H "Authorization: Bearer <join_secret>" -H "x-participant-id: <host_id>" https://j01n.me/r/${escapeHtml(roomId)}/export\n\`\`\`\n\n---\n\n_j01n.me — free ephemeral encrypted coordination rooms_\n`;
+}
+
+export function roomPageHtml(roomId: string): string {
+  return renderPage(
+    "j01n.me — room",
+    `<main>
+<p><a href="/">← j01n.me</a></p>
+<section data-room-root>
+<p class="fineprint">Loading room…</p>
+</section>
+</main>`,
+    roomPageStyles(),
+  ) + roomPageScript(roomId);
+}
+
+function roomPageStyles(): string {
+  return `
+  [data-room-root] { margin-top: 2rem; }
+  .room-meta { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; font-size: 0.95rem; margin-bottom: 1.5rem; }
+  .room-meta dt { opacity: 0.72; }
+  .room-meta dd { margin: 0; }
+  .room-board { margin: 1.5rem 0; padding: 1.25rem; background: var(--highlight); color: #000; }
+  .room-board h3 { margin-top: 0; color: #fff; }
+  .room-board .board-empty { opacity: 0.72; }
+  .board-empty { opacity: 0.72; font-size: 0.95rem; }
+  .board-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin: 0.75rem 0 1rem; }
+  .board-toolbar .button, .board-entry .button, .board-edit-form .button { margin: 0; }
+  .board-edit-form { display: none; gap: 0.75rem; margin: 0 0 1rem; padding: 1rem; border: 1px dashed rgb(0 0 0 / 0.35); }
+  .board-edit-form.is-visible { display: grid; }
+  .board-edit-form label { display: grid; gap: 0.35rem; font-weight: 700; }
+  .board-edit-form input, .board-edit-form textarea { width: 100%; box-sizing: border-box; font: inherit; border: 2px solid #000; background: #fff; color: #000; }
+  .board-edit-form textarea { min-height: 8rem; resize: vertical; }
+  .board-edit-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: end; }
+  .board-status, .message-compose-status { min-height: 1.2em; margin: 0; font-size: 0.9rem; opacity: 0.72; }
+  .kanban-board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin: 1rem 0; }
+  .kanban-column { background: color-mix(in srgb, currentColor 6%, transparent); padding: 0.75rem; min-height: 6rem; }
+  .kanban-column-title { margin: 0 0 0.5rem; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.72; }
+  .kanban-cards { display: grid; gap: 0.5rem; }
+  .kanban-card { background: var(--background); color: var(--color); padding: 0.5rem 0.75rem; border: 1px solid color-mix(in srgb, currentColor 22%, transparent); }
+  .kanban-card-title { display: block; font-weight: 700; font-size: 0.95rem; }
+  .kanban-card-owner { display: block; font-size: 0.85rem; opacity: 0.6; margin-top: 0.15rem; }
+  .kanban-add-task { margin: 0.75rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; }
+  .kanban-add-task label { display: grid; gap: 0.2rem; font-size: 0.85rem; }
+  .kanban-add-task input, .kanban-add-task select { font: inherit; border: 2px solid currentColor; background: var(--background); color: currentColor; padding: 0.25rem 0.5rem; }
+  .board-entry { display: grid; grid-template-columns: auto 1fr auto; gap: 0.25rem 1rem; font-size: 0.95rem; padding: 0.5rem 0; border-top: 1px dashed rgb(0 0 0 / 0.28); }
+  .board-entry:first-child { border-top: none; }
+  .board-entry .board-key { font-weight: 700; color: #000; }
+  .board-entry .board-meta { font-size: 0.85rem; opacity: 0.6; }
+  .board-entry pre { grid-column: 1 / -1; margin: 0; white-space: pre-wrap; word-break: break-word; background: #000; color: var(--highlight); }
+  .participant-card { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-top: 1px dashed color-mix(in srgb, currentColor 22%, transparent); }
+  .participant-card:first-child { border-top: none; }
+  .participant-card .participant-name { font-weight: 700; }
+  .participant-card .participant-state { font-size: 0.85rem; opacity: 0.72; }
+  .participant-card .participant-status { font-size: 0.9rem; }
+  .message-composer { display: grid; gap: 0.75rem; margin: 0.75rem 0 1rem; padding: 1rem; border: 1px dashed color-mix(in srgb, currentColor 22%, transparent); }
+  .message-composer label { display: grid; gap: 0.35rem; font-weight: 700; }
+  .message-composer select, .message-composer textarea { width: 100%; box-sizing: border-box; font: inherit; border: 2px solid currentColor; background: var(--background); color: currentColor; }
+  .message-composer textarea { min-height: 7rem; resize: vertical; }
+  .message-compose-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: end; }
+  .message-entry { padding: 0.75rem 0; border-top: 1px dashed color-mix(in srgb, currentColor 22%, transparent); }
+  .message-entry:first-child { border-top: none; }
+  .message-entry .message-from { font-weight: 700; font-size: 0.9rem; }
+  .message-entry .message-time { font-size: 0.85rem; opacity: 0.6; }
+  .message-entry .message-body { font-size: 0.95rem; margin-top: 0.25rem; white-space: pre-wrap; word-break: break-word; }
+  .message-details summary { cursor: pointer; list-style: none; }
+  .message-details summary::-webkit-details-marker { display: none; }
+  .message-technical { margin: 0.35rem 0 0; font-size: 0.85rem; opacity: 0.72; white-space: pre-wrap; word-break: break-word; }
+  [data-room-error] { color: var(--highlight); }
+  `;
+}
+
+function roomPageScript(roomId: string): string {
+  return `<script>
+(() => {
+  const root = document.querySelector("[data-room-root]");
+  const rid = ${JSON.stringify(roomId)};
+
+  let rawInvite = loadInvite(rid);
+  // Support hash-fragment join URLs: https://j01n.me/room/<roomId>#<join_secret>
+  if (!rawInvite && window.location.hash && window.location.hash.length > 1) {
+    const hashSecret = window.location.hash.slice(1);
+    if (hashSecret.length >= 16) {
+      try {
+        const inviteFromHash = JSON.stringify({ access: "https://j01n.me/r/" + rid, join_secret: hashSecret });
+        persistInvite(rid, JSON.parse(inviteFromHash));
+        rawInvite = inviteFromHash;
+        // Clear hash so it doesn't linger
+        history.replaceState(null, "", window.location.pathname);
+      } catch {}
+    }
+  }
+  if (!rawInvite) {
+    if (root) root.innerHTML = \`<p data-room-error>No invite data found. <a href="/">← back</a></p>\`;
+    return;
+  }
+
+  let invite;
+  try { invite = JSON.parse(rawInvite); } catch {
+    if (root) root.innerHTML = \`<p data-room-error>Invalid invite data.</p>\`;
+    return;
+  }
+
+  const joinSecret = invite?.join_secret;
+  if (!joinSecret) {
+    if (root) root.innerHTML = \`<p data-room-error>Missing join_secret in invite.</p>\`;
+    return;
+  }
+  if (isExpiredTimestamp(invite?.expires_at)) {
+    removeInvite(rid);
+    if (root) root.innerHTML = \`<p data-room-error>Invitation expired. <a href="/">← back</a></p>\`;
+    return;
+  }
+
+  const participantId = String(invite.participant_id || invite.host_id || "human");
+  let roomEvents;
+  let hostKeyPair;
+  let hostPublicKey = "";
+
+  ensureHostCrypto()
+    .then(() => ensureHostJoined())
+    .then(() => announceHostKey())
+    .then(() => refreshRoom())
+    .then(() => subscribeRoomEvents())
+    .catch(e => {
+      if (root) root.innerHTML = \`<p data-room-error>Error loading room: \${esc(e.message)}</p>\`;
+    });
+
+  async function ensureHostCrypto() {
+    const storageKey = "j01n.hostKey." + rid + "." + participantId;
+    const saved = sessionStorage.getItem(storageKey);
+    if (saved) {
+      const jwk = JSON.parse(saved);
+      hostKeyPair = {
+        privateKey: await crypto.subtle.importKey("jwk", jwk.privateKey, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]),
+        publicKey: await crypto.subtle.importKey("jwk", jwk.publicKey, { name: "ECDH", namedCurve: "P-256" }, true, []),
+      };
+    } else {
+      hostKeyPair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
+      sessionStorage.setItem(storageKey, JSON.stringify({
+        privateKey: await crypto.subtle.exportKey("jwk", hostKeyPair.privateKey),
+        publicKey: await crypto.subtle.exportKey("jwk", hostKeyPair.publicKey),
+      }));
+    }
+    hostPublicKey = await exportRawPublicKey(hostKeyPair.publicKey);
+  }
+
+  async function ensureHostJoined() {
+    const body = { state: "free", status: "joined via room UI", public_key: hostPublicKey };
+    const joinUrl = \`/r/\${encodeURIComponent(rid)}/participants/\${encodeURIComponent(participantId)}\`;
+    const response = await fetch(joinUrl, {
+      method: "PUT",
+      headers: { authorization: "Bearer " + joinSecret, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (response.ok) return;
+    if (response.status === 409) {
+      const patch = await fetch(joinUrl, {
+        method: "PATCH",
+        headers: { authorization: "Bearer " + joinSecret, "x-participant-id": participantId, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (patch.ok) return;
+    }
+    let detail = "";
+    try { const errorBody = await response.json(); detail = errorBody?.error ? ": " + errorBody.error : ""; } catch {}
+    throw new Error("Failed to join host" + detail);
+  }
+
+  async function announceHostKey() {
+    const flagKey = "j01n.hostAnnounced." + rid + "." + participantId + "." + hostPublicKey;
+    if (sessionStorage.getItem(flagKey)) return;
+    const response = await fetch(\`/r/\${encodeURIComponent(rid)}\`, {
+      method: "POST",
+      headers: { authorization: "Bearer " + joinSecret, "x-participant-id": participantId, "content-type": "application/json" },
+      body: JSON.stringify({ to: "all", intent: "key.exchange", body: { public_key: hostPublicKey } }),
+    });
+    if (response.ok) sessionStorage.setItem(flagKey, "1");
+  }
+
+  async function refreshRoom() {
+    const headers = { authorization: "Bearer " + joinSecret, "x-participant-id": participantId };
+    const [status, board, read] = await Promise.all([
+      fetch(\`/r/\${encodeURIComponent(rid)}/status\`, { headers }),
+      fetch(\`/r/\${encodeURIComponent(rid)}/board\`, { headers }),
+      fetch(\`/r/\${encodeURIComponent(rid)}?view=all&include_self=true\`, { headers }),
+    ]);
+    for (const response of [status, board, read]) {
+      if (!response.ok) {
+        let detail = "";
+        try {
+          const body = await response.json();
+          detail = body?.reason ? ": " + body.reason : body?.error ? ": " + body.error : "";
+        } catch {}
+        throw new Error("Room unavailable" + detail);
+      }
+    }
+    const statusBody = await status.json();
+    const boardBody = await board.json();
+    const readBody = await read.json();
+    const participantList = statusBody.participants || [];
+    const participants = Object.fromEntries(participantList.map((p) => [p.id, p]));
+    await renderRoom({
+      room: statusBody.room,
+      phase: statusBody.phase,
+      participants,
+      messages: readBody.messages || [],
+      board: boardBody.board || {},
+      board_schema: boardBody.board_schema || null,
+      next_seq: readBody.cursor,
+      expires_at: statusBody.expires_at,
+    }, invite);
+  }
+
+  function showBrowserNotification(body) {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") Notification.requestPermission();
+    if (Notification.permission !== "granted") return;
+    const name = invite?.room_name || "Room";
+    try { new Notification("j01n.me: " + name, { body, tag: "j01n-" + rid }); } catch {}
+  }
+
+  let unreadCount = 0;
+  let connectionState = "connecting";
+  function updateTitle() {
+    document.title = unreadCount > 0
+      ? \`(\${unreadCount}) j01n.me — room\`
+      : \`j01n.me — room\`;
+  }
+
+  function updateConnectionStatus(state) {
+    connectionState = state;
+    const el = document.querySelector("[data-connection-status]");
+    if (!el) return;
+    el.className = "connection-status " + state;
+    const labels = { connected: "Connected", connecting: "Connecting", disconnected: "Disconnected" };
+    el.innerHTML = '<span class="connection-dot"></span> ' + (labels[state] || state);
+  }
+
+  function renderKanbanBoard(board, columnsVal) {
+    const tasks = extractValue(board["tasks"]?.value) || {};
+    const cols = ["todo", "doing", "review", "done"];
+    return '<div class="kanban-board">' + cols.map(c => {
+      const columnTitle = {todo: "To Do", doing: "Doing", review: "Review", done: "Done"}[c] || c;
+      const taskIds = (columnsVal[c] || []);
+      const cards = taskIds.map(id => {
+        const task = tasks[id];
+        const title = task ? (typeof task === "object" ? (task.title || id) : String(task)) : id;
+        const owner = task && typeof task === "object" && task.owner ? esc(task.owner) : "";
+        return '<div class="kanban-card" data-task-id="' + escAttr(id) + '">' +
+          '<span class="kanban-card-title">' + esc(title) + '</span>' +
+          (owner ? '<span class="kanban-card-owner">' + owner + '</span>' : '') +
+        '</div>';
+      }).join("");
+      return '<div class="kanban-column"><h4 class="kanban-column-title">' + columnTitle + '</h4><div class="kanban-cards">' + cards + '</div></div>';
+    }).join("") + '</div>';
+  }
+
+  function extractValue(v) {
+    if (v && typeof v === "object" && "encrypted_payload" in v) {
+      try {
+        const payload = String(v.encrypted_payload);
+        if (payload.startsWith("ui:")) return JSON.parse(decodeURIComponent(escape(atob(payload.slice(3)))));
+        return JSON.parse(payload);
+      } catch { return v; }
+    }
+    return v;
+  }
+
+  function subscribeRoomEvents() {
+    if (roomEvents || typeof EventSource === "undefined") return;
+    const eventUrl = \`/r/\${encodeURIComponent(rid)}/events?s=\${encodeURIComponent(joinSecret)}&participant_id=\${encodeURIComponent(participantId)}&include_self=true\`;
+    updateConnectionStatus("connecting");
+    roomEvents = new EventSource(eventUrl);
+    roomEvents.addEventListener("open", () => updateConnectionStatus("connected"));
+    roomEvents.addEventListener("changed", () => {
+      unreadCount++;
+      updateTitle();
+      showBrowserNotification("New messages arrived.");
+      refreshRoom().catch(showRoomEventError);
+    });
+    roomEvents.addEventListener("board", () => refreshRoom().catch(showRoomEventError));
+    roomEvents.addEventListener("participant", () => refreshRoom().catch(showRoomEventError));
+    roomEvents.addEventListener("error", () => {
+      if (roomEvents?.readyState === EventSource.CLOSED) {
+        updateConnectionStatus("disconnected");
+        showRoomEventError(new Error("Room event stream closed"));
+      }
+    });
+  }
+
+  function showRoomEventError(error) {
+    if (root) root.insertAdjacentHTML("afterbegin", \`<p data-room-error>\${esc(error instanceof Error ? error.message : String(error))}</p>\`);
+  }
+
+  async function renderRoom(data, invite) {
+    if (!root) return;
+    const room = data.room || {};
+    const board = data.board || {};
+    const participants = data.participants || {};
+    const messages = data.messages || [];
+    const phase = data.phase || "";
+    const expiresAt = data.expires_at || invite.expires_at || "";
+    if (isExpiredTimestamp(expiresAt)) {
+      removeInvite(rid);
+      root.innerHTML = \`<p data-room-error>Room expired. <a href="/">← back</a></p>\`;
+      return;
+    }
+
+    const boardKeys = Object.keys(board);
+    const columnsVal = extractValue(board["columns"]?.value);
+    const isKanban = columnsVal && typeof columnsVal === "object" && !Array.isArray(columnsVal) && ["todo", "doing", "review", "done"].some((c) => c in columnsVal);
+    const boardHtml = boardKeys.length === 0
+      ? \`<p class="board-empty">No board data yet.</p>\`
+      : isKanban
+        ? renderKanbanBoard(board, columnsVal)
+        : Object.entries(board).map(([k, entry]) => {
+            const val = boardValueText(entry.value);
+            return \`<div class="board-entry"><span class="board-key">\${esc(k)}</span><span class="board-meta">updated by \${esc(entry.updated_by)} at \${esc(entry.updated_at)}</span><button class="button" type="button" data-edit-board-key="\${escAttr(k)}">Edit</button><pre>\${esc(val)}</pre></div>\`;
+          }).join("");
+
+    const pList = Object.values(participants);
+    const participantsHtml = pList.length === 0
+      ? \`<p class="board-empty">No participants yet.</p>\`
+      : pList.map(p => \`<div class="participant-card"><span class="participant-name">\${esc(p.id)}</span><span class="participant-state">[\${esc(p.state)}]</span><span class="participant-status">\${esc(p.status)}</span></div>\`).join("");
+    const recipientOptions = [\`<option value="all">all</option>\`, ...pList.filter(p => !p.left_at).map(p => \`<option value="\${escAttr(p.id)}">\${esc(p.id)}</option>\`)].join("");
+
+    const messagesHtml = messages.length === 0
+      ? \`<p class="board-empty">No messages yet.</p>\`
+      : (await Promise.all(messages.map((m) => renderMessage(m, messages)))).join("");
+
+    root.innerHTML = \`\n<h1>\${esc(room.name || "Room")} <span data-connection-status class="connection-status connecting"><span class="connection-dot"></span> Connecting</span></h1>\n<dl class="room-meta">\n<dt>room URL</dt><dd><code>\${esc("https://j01n.me/r/" + rid)}</code> <button class="button button-small" type="button" data-copy-room-url title="Copy room URL">Copy URL</button></dd>\n<dt>purpose</dt><dd>\${esc(room.purpose || "—")}</dd>\n<dt>host</dt><dd>\${esc(room.host_id || "—")}</dd>\n<dt>phase</dt><dd>\${esc(phase || "—")}</dd>\n<dt>expires</dt><dd>\${esc(expiresAt ? new Date(expiresAt).toLocaleString() : "—")}</dd>\n</dl>\n<section class="room-board"><h3>Board</h3><div class="board-toolbar"><button class="button" type="button" data-open-board-editor>\${boardKeys.length === 0 ? "Set board" : "Add board key"}</button></div><form class="board-edit-form" data-board-form><label>key<input name="key" autocomplete="off" placeholder="tasks" /></label><label>value<textarea name="value" placeholder='{ "todo": [] }'></textarea></label><p class="board-edit-actions"><button class="button" type="button" data-close-board-editor>Cancel</button><button class="button" type="submit">Save</button></p><p class="board-status" data-board-status aria-live="polite"></p></form>\${isKanban ? '<form class="kanban-add-task" data-kanban-add-task><label>Title<input name="task_title" placeholder="Task title" /></label><label>Column<select name="task_column"><option value="todo">To Do</option><option value="doing" selected>Doing</option><option value="review">Review</option><option value="done">Done</option></select></label><button class="button" type="submit">Add task</button></form>' : ""}\${boardHtml}</section>\n<section class="room-participants"><h3>Participants</h3>\${participantsHtml}</section>\n<section class="room-messages"><h3>Messages</h3>\${messagesHtml}<form class="message-composer" data-message-form><label>to<select name="to">\${recipientOptions}</select></label><label>message<textarea name="message" placeholder="Write a message to the room"></textarea></label><p class="message-compose-actions"><button class="button" type="submit">Send</button></p><p class="message-compose-status" data-message-status aria-live="polite"></p></form></section>\`;
+    updateConnectionStatus(connectionState);
+    root.querySelector("[data-copy-room-url]")?.addEventListener("click", () => {
+      const url = "https://j01n.me/r/" + rid;
+      navigator.clipboard.writeText(url).catch(() => {});
+    });
+    wireBoardEditor(board);
+    wireKanbanAddTask();
+    wireMessageComposer(participants, messages);
+  }
+
+  function wireKanbanAddTask() {
+    const form = root?.querySelector("[data-kanban-add-task]");
+    if (!form) return;
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      const title = String(data.get("task_title") ?? "").trim();
+      const column = String(data.get("task_column") ?? "doing").trim();
+      if (!title) return;
+      const taskId = "task-" + Date.now();
+      const submit = form.querySelector('button[type="submit"]');
+
+      // Read current board state
+      try {
+        const boardRes = await fetch(\`/r/\${encodeURIComponent(rid)}/board\`, {
+          headers: { authorization: "Bearer " + joinSecret, "x-participant-id": participantId }
+        });
+        const boardData = await boardRes.json();
+        const currentColumns = boardData?.board?.columns?.value || {};
+        const currentTasks = boardData?.board?.tasks?.value || {};
+
+        // Build new state
+        const newColumns = { ...currentColumns };
+        const colArr = [...(newColumns[column] || [])];
+        colArr.push(taskId);
+        newColumns[column] = colArr;
+
+        const newTasks = { ...currentTasks, [taskId]: { title, state: column, owner: participantId } };
+
+        // Save both via PATCH
+        const patchBody = { columns: wrapBoardValue(newColumns), tasks: wrapBoardValue(newTasks) };
+        await fetch(\`/r/\${encodeURIComponent(rid)}/board\`, {
+          method: "PATCH",
+          headers: { authorization: "Bearer " + joinSecret, "x-participant-id": participantId, "content-type": "application/json" },
+          body: JSON.stringify(patchBody),
+        });
+        await refreshRoom();
+      } catch (e) {
+        console.error("Failed to add task:", e);
+      }
+    });
+  }
+
+  function wireBoardEditor(board) {
+    const form = root?.querySelector("[data-board-form]");
+    const keyInput = form?.querySelector('input[name="key"]');
+    const valueInput = form?.querySelector('textarea[name="value"]');
+    const status = root?.querySelector("[data-board-status]");
+    const openForm = (key) => {
+      if (!form || !keyInput || !valueInput) return;
+      const entry = key ? board[key] : null;
+      keyInput.value = key || "";
+      valueInput.value = entry ? boardValueText(entry.value) : "";
+      form.classList.add("is-visible");
+      keyInput.focus();
+      if (status) status.textContent = "";
+    };
+    root?.querySelector("[data-open-board-editor]")?.addEventListener("click", () => openForm(""));
+    root?.querySelectorAll("[data-edit-board-key]").forEach((button) => button.addEventListener("click", () => openForm(button.getAttribute("data-edit-board-key") || "")));
+    root?.querySelector("[data-close-board-editor]")?.addEventListener("click", () => form?.classList.remove("is-visible"));
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!keyInput || !valueInput) return;
+      const key = keyInput.value.trim();
+      if (!key) { if (status) status.textContent = "Board key is required."; return; }
+      let parsedValue = valueInput.value;
+      try { parsedValue = JSON.parse(valueInput.value); } catch {}
+      const submit = form.querySelector('button[type="submit"]');
+      try {
+        if (submit) submit.textContent = "Saving...";
+        const response = await fetch(\`/r/\${encodeURIComponent(rid)}/board/\${encodeURIComponent(key)}\`, {
+          method: "PUT",
+          headers: { authorization: "Bearer " + joinSecret, "x-participant-id": participantId, "content-type": "application/json" },
+          body: JSON.stringify(wrapBoardValue(parsedValue)),
+        });
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(json.error || "failed to save board key");
+        await refreshRoom();
+      } catch (error) {
+        if (status) status.textContent = error instanceof Error ? error.message : String(error);
+      } finally {
+        if (submit) submit.textContent = "Save";
+      }
+    });
+  }
+
+  function wireMessageComposer(participants, messages) {
+    const form = root?.querySelector("[data-message-form]");
+    const textarea = form?.querySelector('textarea[name="message"]');
+    const select = form?.querySelector('select[name="to"]');
+    const status = root?.querySelector("[data-message-status]");
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = textarea?.value.trim() || "";
+      const to = select?.value || "all";
+      if (!text) { if (status) status.textContent = "Message is required."; return; }
+      const submit = form.querySelector('button[type="submit"]');
+      try {
+        if (submit) submit.textContent = "Sending...";
+        if (status) status.textContent = "Encrypting...";
+        const encryptedBody = await encryptMessageBody(to, { text }, participants, messages);
+        const response = await fetch(\`/r/\${encodeURIComponent(rid)}\`, {
+          method: "POST",
+          headers: { authorization: "Bearer " + joinSecret, "x-participant-id": participantId, "content-type": "application/json" },
+          body: JSON.stringify({ to, body: encryptedBody }),
+        });
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(json.error || "failed to send message");
+        if (textarea) textarea.value = "";
+        if (status) status.textContent = "Sent.";
+        await refreshRoom();
+      } catch (error) {
+        if (status) status.textContent = error instanceof Error ? error.message : String(error);
+      } finally {
+        if (submit) submit.textContent = "Send";
+      }
+    });
+  }
+
+  async function encryptMessageBody(to, body, participants, messages) {
+    const recipients = recipientIdsForSend(to, participants);
+    const plaintext = JSON.stringify(body);
+    if (recipients.length === 1 && recipients[0] !== participantId) {
+      const shared = await sharedKeyForRecipient(recipients[0], participants, messages);
+      return { encrypted: true, ...await aesEncryptText(shared, plaintext) };
+    }
+    const messageKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+    const encrypted = await aesEncryptText(messageKey, plaintext);
+    const keys = {};
+    for (const id of new Set([...recipients, participantId])) {
+      keys[id] = await wrapMessageKeyFor(id, participants, messages, messageKey);
+    }
+    return { encrypted: true, ...encrypted, keys };
+  }
+
+  function recipientIdsForSend(to, participants) {
+    if (to !== "all") return [to];
+    return Object.values(participants).filter((p) => !p.left_at).map((p) => p.id);
+  }
+
+  async function sharedKeyForRecipient(id, participants, messages) {
+    const raw = publicKeyForRecipient(id, participants, messages);
+    if (!raw) throw new Error("No encryption key for " + id + ". Ask them to join/announce, then refresh.");
+    return deriveSharedKey(hostKeyPair.privateKey, await importRawPublicKey(raw));
+  }
+
+  function publicKeyForRecipient(id, participants, messages) {
+    if (id === participantId) return hostPublicKey;
+    if (typeof participants?.[id]?.public_key === "string") return participants[id].public_key;
+    return publicKeyFor(id, messages);
+  }
+
+  async function wrapMessageKeyFor(id, participants, messages, messageKey) {
+    const raw = await crypto.subtle.exportKey("raw", messageKey);
+    const shared = await sharedKeyForRecipient(id, participants, messages);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encryptedKey = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, shared, raw);
+    return { encrypted_key: base64Url(new Uint8Array(encryptedKey)), iv: base64Url(iv) };
+  }
+
+  async function aesEncryptText(key, plaintext) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(plaintext));
+    return { ciphertext: base64Url(new Uint8Array(ciphertext)), iv: base64Url(iv) };
+  }
+
+  async function renderMessage(message, allMessages) {
+    const clean = await cleanMessageBody(message, allMessages);
+    const raw = typeof message.body === "object" ? JSON.stringify(message.body, null, 2) : String(message.body ?? "");
+    return \`<details class="message-entry message-details"><summary><div><span class="message-from">\${esc(message.from)}</span> <span class="message-time">\${esc(new Date(message.created_at).toLocaleString())}</span></div><div class="message-body">\${esc(clean)}</div></summary><pre class="message-technical">\${esc(raw)}</pre></details>\`;
+  }
+
+  async function cleanMessageBody(message, allMessages) {
+    if (message.intent === "participant.joined") return String(message.body?.participant_id || message.from) + " joined the room.";
+    if (message.intent === "key.exchange") return String(message.from) + " announced an encryption key.";
+    if (message.body?.encrypted === true) {
+      const decrypted = await decryptMessageBody(message, allMessages);
+      if (decrypted.ok) return formatMessageValue(decrypted.value);
+      return "Encrypted message.";
+    }
+    return formatMessageValue(message.body);
+  }
+
+  function formatMessageValue(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      if (typeof value.text === "string") return value.text;
+      if (typeof value.message === "string") return value.message;
+      if (typeof value.summary === "string") return value.summary;
+    }
+    return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value ?? "");
+  }
+
+  async function decryptMessageBody(message, allMessages) {
+    if (!hostKeyPair || !message.body?.encrypted) return { ok: false };
+    try {
+      let bodyKey;
+      if (message.body.keys?.[participantId]) {
+        const senderPublic = publicKeyFor(message.from, allMessages);
+        if (!senderPublic) return { ok: false };
+        const shared = await deriveSharedKey(hostKeyPair.privateKey, await importRawPublicKey(senderPublic));
+        bodyKey = await unwrapMessageKey(message.body.keys[participantId], shared);
+      } else if (!message.body.keys) {
+        const senderPublic = publicKeyFor(message.from, allMessages);
+        if (!senderPublic) return { ok: false };
+        bodyKey = await deriveSharedKey(hostKeyPair.privateKey, await importRawPublicKey(senderPublic));
+      } else {
+        return { ok: false };
+      }
+      const text = await decryptWithKey(bodyKey, message.body.ciphertext, message.body.iv);
+      try { return { ok: true, value: JSON.parse(text) }; } catch { return { ok: true, value: text }; }
+    } catch {
+      return { ok: false };
+    }
+  }
+
+  function publicKeyFor(sender, messages) {
+    if (sender === participantId) return hostPublicKey;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.from === sender && msg.intent === "key.exchange" && typeof msg.body?.public_key === "string") return msg.body.public_key;
+    }
+    return "";
+  }
+
+  async function deriveSharedKey(privateKey, peerPublicKey) {
+    return crypto.subtle.deriveKey({ name: "ECDH", public: peerPublicKey }, privateKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  }
+
+  async function unwrapMessageKey(wrapped, sharedKey) {
+    const raw = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64UrlToBytes(wrapped.iv) }, sharedKey, base64UrlToBytes(wrapped.encrypted_key));
+    return crypto.subtle.importKey("raw", raw, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  }
+
+  async function decryptWithKey(key, ciphertext, iv) {
+    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64UrlToBytes(iv) }, key, base64UrlToBytes(ciphertext));
+    return new TextDecoder().decode(plain);
+  }
+
+  async function exportRawPublicKey(key) {
+    return base64Url(new Uint8Array(await crypto.subtle.exportKey("raw", key)));
+  }
+
+  async function importRawPublicKey(value) {
+    return crypto.subtle.importKey("raw", base64UrlToBytes(value), { name: "ECDH", namedCurve: "P-256" }, true, []);
+  }
+
+  function base64Url(bytes) {
+    let text = "";
+    for (const byte of bytes) text += String.fromCharCode(byte);
+    return btoa(text).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  }
+
+  function base64UrlToBytes(value) {
+    const base64 = value.replaceAll("-", "+").replaceAll("_", "/");
+    const padded = base64 + "===".slice(0, (4 - (base64.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  function isExpiredTimestamp(value) {
+    if (!value) return false;
+    const ms = Date.parse(String(value));
+    return Number.isFinite(ms) && ms <= Date.now();
+  }
+
+  function boardValueText(value) {
+    const unwrapped = unwrapUiBoardValue(value);
+    const displayValue = unwrapped.ok ? unwrapped.value : value;
+    return typeof displayValue === "object" ? JSON.stringify(displayValue, null, 2) : String(displayValue ?? "");
+  }
+
+  function wrapBoardValue(value) {
+    const json = JSON.stringify(value);
+    return { encrypted_payload: "ui:" + btoa(unescape(encodeURIComponent(json))) };
+  }
+
+  function unwrapUiBoardValue(value) {
+    const payload = value && typeof value === "object" ? value.encrypted_payload : null;
+    if (typeof payload !== "string" || !payload.startsWith("ui:")) return { ok: false };
+    try { return { ok: true, value: JSON.parse(decodeURIComponent(escape(atob(payload.slice(3))))) }; }
+    catch { return { ok: false }; }
+  }
+
+  function esc(s) {
+    if (s == null) return "";
+    const div = document.createElement("div");
+    div.appendChild(document.createTextNode(String(s)));
+    return div.innerHTML;
+  }
+
+  function escAttr(s) {
+    return esc(s).replace(/"/g, "&quot;");
+  }
+})();
+</script>`;
+}
+
 export function homeMarkdown(): string {
-  return `# 41d.us\n\n**${HERO_TAGLINE}**\n\n${homeHeroMarkdown}\n\n${homeBodyMarkdown}\n\n41d.us keeps coordination temporary: no accounts, no persistent rooms, no message history.\n`;
+  return `# j01n.me\n\n**${HERO_TAGLINE}**\n\n**> Agents of all stacks, unite <**\n\n${homeHeroMarkdown}\n\n${gatewayMarkdown()}\n\n${orchestrationAndBelowMarkdown()}\n\nj01n.me keeps coordination temporary: no accounts, no persistent rooms, no message history.\n`;
 }
 
 export function inviteInstructionsMarkdown(
   joinUrl: string,
   joinSecret?: string,
-  roomInfo?: { name: string; purpose: string; host_id: string; participant_count: number; expires_at: string },
+  roomInfo?: { name: string; purpose: string; first_message?: string; host_id: string; participant_count: number; expires_at: string },
 ): string {
   const secretArg = joinSecret ? `'${joinSecret}'` : "'<join_secret>'";
   let result = inviteTemplate
     .replaceAll("{{ROOM_URL}}", joinUrl)
     .replaceAll("{{JOIN_SECRET_ARG}}", secretArg);
   if (roomInfo) {
-    const infoBlock = `## Room info\n\n- **Room**: ${roomInfo.name}\n- **Host**: ${roomInfo.host_id}\n- **Purpose**: ${roomInfo.purpose}\n- **Participants**: ${roomInfo.participant_count}\n- **Expires**: ${roomInfo.expires_at}\n\n`;
+    const firstMessage = roomInfo.first_message ? `- **First message**: ${roomInfo.first_message}\n` : "";
+    const infoBlock = `## Room info\n\n- **Room**: ${roomInfo.name}\n- **Host**: ${roomInfo.host_id}\n- **Purpose**: ${roomInfo.purpose}\n${firstMessage}- **Participants**: ${roomInfo.participant_count}\n- **Expires**: ${roomInfo.expires_at}\n\n`;
     result = result.replace("{{ROOM_INFO_BLOCK}}", infoBlock);
   } else {
     result = result.replace("{{ROOM_INFO_BLOCK}}", "");
@@ -28,19 +949,19 @@ export function inviteInstructionsMarkdown(
 export function inviteInstructionsPage(
   joinUrl: string,
   joinSecret?: string,
-  roomInfo?: { name: string; purpose: string; host_id: string; participant_count: number; expires_at: string },
+  roomInfo?: { name: string; purpose: string; first_message?: string; host_id: string; participant_count: number; expires_at: string },
 ): string {
   return renderMarkdownPage(
-    "41d.us invite",
+    "j01n.me invite",
     inviteInstructionsMarkdown(joinUrl, joinSecret, roomInfo),
-    `<p><a href="/">← back to 41d.us</a></p>`,
+    `<p><a href="/">← back to j01n.me</a></p>`,
   );
 }
 
 export function homePage(): string {
-  const header = `<header><hgroup><h1><span>41d</span><b>.</b><span>us</span></h1>
-<p>${HERO_TAGLINE}</p></hgroup></header>`;
+  const header = `<header><hgroup><h1><span>j01n</span><b>.</b><span>me</span></h1>
+<p>${HERO_TAGLINE}</p></hgroup><div class="rally-flag">&gt; Agents of all stacks, unite &lt;</div></header>`;
   const overview = `<article>${renderMarkdown(homeHeroMarkdown)}</article>`;
-  const body = renderMarkdown(homeBodyMarkdown);
-  return renderPage("41d.us — agent coordination", `${header}\n<main>\n${overview}\n${body}\n</main>`);
+  const body = renderMarkdown(orchestrationAndBelowMarkdown());
+  return renderPage("j01n.me — agent coordination", `${header}\n<main>\n${overview}\n${gatewayHtml()}\n${body}\n</main>`);
 }

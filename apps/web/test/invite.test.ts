@@ -1,29 +1,44 @@
 import { describe, expect, it } from "vitest";
 import app from "../src/index";
-import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
+import { hashJoinSecret, randomBase64Url } from "@j01n/sdk/crypto";
 import { INVITE_TTL_MS, MAX_INVITE_TTL_MS, MIN_INVITE_TTL_MS } from "../src/constants";
 import { inviteInstructionsMarkdown } from "../src/html";
 import { encryptedPayload } from "./room/helpers";
 
 describe("invite instructions", () => {
   it("shows a direct Agent B join command", () => {
-    const markdown = inviteInstructionsMarkdown("https://41d.us/r/abc", "secret");
+    const markdown = inviteInstructionsMarkdown("https://j01n.me/r/abc", "secret");
 
-    expect(markdown).toContain("ROOM_URL='https://41d.us/r/abc'");
+    expect(markdown).toContain("ACCESS='https://j01n.me/r/abc'");
     expect(markdown).toContain("JOIN_SECRET='secret'");
-    expect(markdown).toContain("node .41d/41d.js join \"$ROOM_URL\" \"$JOIN_SECRET\" \"$ME\"");
-    expect(markdown).toContain("https://41d.us/client/CLAUDE_CODE.md");
+    expect(markdown).toContain("node .j01n/j01n.js join invitation.json '<your_unique_name>' > participant.j01n.json");
+    expect(markdown).toContain("node .j01n/j01n.js watch participant.j01n.json");
+    expect(markdown).toContain("After join, immediately watch the room or poll `read`");
+    expect(markdown).toContain("https://j01n.me/client/CLAUDE_CODE.md");
     expect(markdown).toContain("The join secret is not shown on this page");
     expect(markdown).toContain("Choose your agent or harness");
-    expect(markdown).toContain("https://41d.us/client/PI.md");
-    expect(markdown).toContain("https://41d.us/client/MCP.md");
+    expect(markdown).toContain("https://j01n.me/client/PI.md");
+    expect(markdown).toContain("https://j01n.me/client/MCP.md");
   });
 
   it("escapes HTML special characters in the page version", async () => {
     const { inviteInstructionsPage } = await import("../src/html");
-    const html = inviteInstructionsPage("https://41d.us/r/x", "sec&ret");
+    const html = inviteInstructionsPage("https://j01n.me/r/x", "sec&ret");
 
     expect(html).toContain("sec&amp;ret");
+  });
+
+  it("shows the first message in room instructions when participants enter the room", () => {
+    const markdown = inviteInstructionsMarkdown("https://j01n.me/r/abc", undefined, {
+      name: "review",
+      purpose: "docs",
+      first_message: "Claim a task before editing.",
+      host_id: "human",
+      participant_count: 0,
+      expires_at: "2026-05-26T00:00:00.000Z",
+    });
+
+    expect(markdown).toContain("- **First message**: Claim a task before editing.");
   });
 });
 
@@ -43,10 +58,10 @@ describe("room creation", () => {
     };
 
     const encrypted = encryptedPayload({ text: "Review the Room API." });
-    const response = await app.fetch(new Request("https://41d.us/rooms", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: encrypted }) }), env);
+    const response = await app.fetch(new Request("https://j01n.me/rooms", { method: "POST", body: JSON.stringify({ room_id: "Review Room!", host_id: "CalmPhoenix", room_name: "review room", max_participants: 7, first_message: encrypted }) }), env);
     const body = (await response.json()) as Record<string, unknown>;
 
-    expect(body.access).toBe("https://41d.us/r/Review-Room-");
+    expect(body.access).toBe("https://j01n.me/r/Review-Room-");
     expect(body.join_secret).toEqual(expect.any(String));
     expect(body.join_secret).toMatch(/^[A-Za-z0-9_-]+$/);
     // Room metadata included in the handoff.
@@ -60,6 +75,31 @@ describe("room creation", () => {
       purpose: "review room",
       firstMessage: encrypted,
     });
+  });
+
+  it("registers created rooms for periodic stale-room cleanup", async () => {
+    const calls: Array<{ url: string; body?: string }> = [];
+    const env = {
+      RENDEZVOUS: {
+        idFromName: (name: string) => name,
+        get: () => ({ fetch: async () => new Response(JSON.stringify({ ok: true }), { status: 200 }) }),
+      },
+      ROOM_REGISTRY: {
+        idFromName: (name: string) => name,
+        get: () => ({
+          fetch: async (url: string, init?: RequestInit) => {
+            calls.push({ url, body: init?.body as string | undefined });
+            return new Response(JSON.stringify({ ok: true }), { status: 200 });
+          },
+        }),
+      },
+    };
+
+    const response = await app.fetch(new Request("https://j01n.me/rooms", { method: "POST", body: JSON.stringify({ host_id: "h", room_name: "cleanup" }) }), env);
+
+    expect(response.status).toBe(200);
+    expect(calls[0].url).toBe("https://room-registry.internal/register");
+    expect(JSON.parse(calls[0].body ?? "{}")).toMatchObject({ room_id: expect.any(String), expires_at: expect.any(Number) });
   });
 });
 
@@ -76,7 +116,7 @@ async function postRoom(body: Record<string, unknown>, path = "/rooms"): Promise
       }),
     },
   };
-  const response = await app.fetch(new Request(`https://41d.us${path}`, { method: "POST", body: JSON.stringify(body) }), env);
+  const response = await app.fetch(new Request(`https://j01n.me${path}`, { method: "POST", body: JSON.stringify(body) }), env);
   return { initBody: JSON.parse(captured.body ?? "{}"), response: await response.json() };
 }
 
@@ -91,7 +131,18 @@ describe("purpose vs first_message separation", () => {
 
     expect(initBody.purpose).toBe("Public: docs review");
     expect(initBody.firstMessage).toEqual(encryptedPayload({ text: "Internal kickoff", workflow: "claim a task" }));
-    expect(response.access).toMatch(/^https:\/\/41d\.us\/r\//);
+    expect(response.access).toMatch(/^https:\/\/j01n\.me\/r\//);
+  });
+
+  it("stores an entry message for the room page without returning it in the invitation", async () => {
+    const { initBody, response } = await postRoom({
+      host_id: "h",
+      room_name: "review room",
+      entry_message: "Claim a task before editing.",
+    });
+
+    expect(initBody.entryMessage).toBe("Claim a task before editing.");
+    expect(response.first_message).toBeUndefined();
   });
 
   it("defaults purpose to roomName when omitted, blank, or whitespace", async () => {
@@ -100,7 +151,7 @@ describe("purpose vs first_message separation", () => {
       if (purposeValue !== undefined) body.purpose = purposeValue;
       const { initBody, response } = await postRoom(body);
       expect(initBody.purpose).toBe("fallback room");
-      expect(response.access).toMatch(/^https:\/\/41d\.us\/r\//);
+      expect(response.access).toMatch(/^https:\/\/j01n\.me\/r\//);
     }
   });
 
@@ -116,7 +167,7 @@ describe("purpose vs first_message separation", () => {
         get: () => ({ fetch: async () => new Response(JSON.stringify({ ok: true }), { status: 200 }) }),
       },
     };
-    const response = await app.fetch(new Request("https://41d.us/rooms", { method: "POST", body: JSON.stringify({ host_id: "h", first_message: { text: "plaintext" } }) }), env);
+    const response = await app.fetch(new Request("https://j01n.me/rooms", { method: "POST", body: JSON.stringify({ host_id: "h", first_message: { text: "plaintext" } }) }), env);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: "first_message must be encrypted" });
   });
@@ -127,7 +178,22 @@ describe("purpose vs first_message separation", () => {
       "/invites",
     );
     expect(initBody.purpose).toBe("Legacy entry");
-    expect(response.access).toMatch(/^https:\/\/41d\.us\/r\//);
+    expect(response.access).toMatch(/^https:\/\/j01n\.me\/r\//);
+  });
+});
+
+describe("template board wrapping", () => {
+  it("wraps kanban template board defaults as opaque ui: envelopes so they satisfy encryption checks", async () => {
+    const { initBody } = await postRoom({ host_id: "h", template: "kanban" });
+    const board = initBody.initialBoard as Record<string, { encrypted_payload: string }>;
+    expect(board.columns.encrypted_payload).toMatch(/^ui:/);
+    expect(board.tasks.encrypted_payload).toMatch(/^ui:/);
+  });
+
+  it("lets user-supplied board values override template defaults", async () => {
+    const userValue = encryptedPayload({ todo: ["task-1"] });
+    const { initBody } = await postRoom({ host_id: "h", template: "kanban", board: { columns: userValue } });
+    expect(initBody.initialBoard.columns).toEqual(userValue);
   });
 });
 

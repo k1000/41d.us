@@ -3,8 +3,8 @@ import { securityMarkdown } from "./markdown-assets";
 
 export function securityPage(): string {
   return renderMarkdownPage(
-    "41d.us - security model",
+    "j01n.me - security model",
     securityMarkdown,
-    `<p><a href="/">← back to 41d.us</a></p>`,
+    `<p><a href="/">← back to j01n.me</a></p>`,
   );
 }

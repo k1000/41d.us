@@ -1,6 +1,7 @@
 import { json } from "../format";
 import type { InviteState } from "../types";
-import { parseRequest, authenticate, authenticateParticipant } from "./auth-context";
+import { parseRequest, authenticate, participantTokenAuthThen } from "./auth-context";
+import { dispatchWebhooks } from "./hooks";
 import { joinResponse, roomInfo } from "./info";
 import { createRoomMessage } from "./messages";
 import {
@@ -62,43 +63,49 @@ export class RoomParticipantController {
     );
     const messages = [...updated.messages, systemMessage];
     await this.storage.patchAndSave(updated, { nextSeq: seq, messages });
+    this.events.notifyParticipant(participantId, "joined", participants[participantId]);
     this.events.notifyMessage(systemMessage, seq);
+    dispatchWebhooks({ ...updated, messages }, "participant", { participant_id: participantId, action: "joined", participant: participants[participantId] });
+    dispatchWebhooks({ ...updated, messages }, "message", { type: "message", message: systemMessage, last_seq: seq });
     return json({ ...joinResponse(updated, participantId, invite.nextSeq, collectPeerKeys(participants)), participant_token: token });
   }
 
   async update(request: Request, invite: InviteState, participantIdFromPath: string): Promise<Response> {
-    const parsed = await parseRequest(request);
-    const auth = await authenticateParticipant(invite, parsed, participantIdFromPath);
-    if (auth instanceof Response) return auth;
-    const actorId = auth.participantId;
-    const targetId = normalizeParticipantId(participantIdFromPath);
-    if (targetId instanceof Response) return targetId;
-    if (actorId !== targetId && actorId !== invite.hostId) {
-      return json({ error: "only participant or host can update participant status" }, 403);
-    }
-    if (!isParticipantJoined(invite.participants, targetId)) {
-      return json({ error: "participant has not joined" }, 403);
-    }
-    const profile = parseParticipantProfile(parsed.body);
-    if (profile instanceof Response) return profile;
-    const updated = withUpdatedParticipant(invite, targetId, profile);
-    await this.storage.putInvite(updated);
-    return json({ ok: true, participant: updated.participants[targetId] });
+    return participantTokenAuthThen(invite, request, async (auth) => {
+      const actorId = auth.participantId;
+      const targetId = normalizeParticipantId(participantIdFromPath);
+      if (targetId instanceof Response) return targetId;
+      if (actorId !== targetId && actorId !== invite.hostId) {
+        return json({ error: "only participant or host can update participant status" }, 403);
+      }
+      if (!isParticipantJoined(invite.participants, targetId)) {
+        return json({ error: "participant has not joined" }, 403);
+      }
+      const profile = parseParticipantProfile(auth.body);
+      if (profile instanceof Response) return profile;
+      const updated = withUpdatedParticipant(invite, targetId, profile);
+      await this.storage.putInvite(updated);
+      this.events.notifyParticipant(targetId, "updated", updated.participants[targetId]);
+      dispatchWebhooks(updated, "participant", { participant_id: targetId, action: "updated", participant: updated.participants[targetId] });
+      return json({ ok: true, participant: updated.participants[targetId] });
+    });
   }
 
   async delete(request: Request, invite: InviteState, targetIdFromPath: string): Promise<Response> {
-    const parsed = await parseRequest(request);
-    const auth = await authenticateParticipant(invite, parsed, targetIdFromPath);
-    if (auth instanceof Response) return auth;
-    const actorId = auth.participantId;
-    const targetId = normalizeParticipantId(targetIdFromPath);
-    if (targetId instanceof Response) return targetId;
-    if (actorId === targetId) return this.leave(invite, targetId);
-    return this.kick(invite, actorId, targetId);
+    return participantTokenAuthThen(invite, request, async (auth) => {
+      const actorId = auth.participantId;
+      const targetId = normalizeParticipantId(targetIdFromPath);
+      if (targetId instanceof Response) return targetId;
+      if (actorId === targetId) return this.leave(invite, targetId);
+      return this.kick(invite, actorId, targetId);
+    });
   }
 
   private async leave(invite: InviteState, participantId: string): Promise<Response> {
-    await this.storage.putInvite(withLeftParticipant(invite, participantId));
+    const updated = withLeftParticipant(invite, participantId);
+    await this.storage.putInvite(updated);
+    this.events.notifyParticipant(participantId, "left", updated.participants[participantId]);
+    dispatchWebhooks(updated, "participant", { participant_id: participantId, action: "left", participant: updated.participants[participantId] });
     await this.storage.deleteIfEmpty();
     return json({ ok: true });
   }
@@ -108,6 +115,8 @@ export class RoomParticipantController {
     const updated = withKickedParticipant(invite, targetId);
     if (updated instanceof Response) return updated;
     await this.storage.putInvite(updated);
+    this.events.notifyParticipant(targetId, "kicked", updated.participants[targetId]);
+    dispatchWebhooks(updated, "participant", { participant_id: targetId, action: "kicked", participant: updated.participants[targetId] });
     return json({ ok: true, kicked: targetId, room: roomInfo(updated) });
   }
 }

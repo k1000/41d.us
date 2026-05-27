@@ -1,7 +1,7 @@
 import { json, type GuardResult } from "../format";
 import type { InviteState, Participant } from "../types";
 import { normalizeState, normalizeStatus, normalizeModel, normalizeSkills } from "../validation";
-import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
+import { hashJoinSecret, randomBase64Url } from "@j01n/sdk/crypto";
 
 interface ParticipantProfile {
   state?: "free" | "busy";
@@ -91,6 +91,7 @@ function updateParticipantProfile(participant: Participant, profile: Participant
     last_seen_at: now,
     ...(profile.model !== undefined ? { model: profile.model } : {}),
     ...(profile.skills !== undefined ? { skills: profile.skills } : {}),
+    ...(profile.public_key !== undefined ? { public_key: profile.public_key } : {}),
   };
 }
 

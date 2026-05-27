@@ -52,8 +52,10 @@ describe("RoomEvents", () => {
     const changed = decoder.decode((await reader.read()).value);
     await reader.cancel();
 
-    expect(changed).toContain("event: changed");
+    expect(changed).toContain("event: message");
     expect(changed).toContain('"last_seq":2');
+    expect(changed).toContain('"from":"agent-a"');
+    expect(changed).toContain('"to":"agent-b"');
   });
 
   it("does not echo self messages unless includeSelf is enabled", async () => {
@@ -71,6 +73,24 @@ describe("RoomEvents", () => {
     await reader.cancel();
 
     expect(race).toBe("timeout");
+  });
+
+  it("includeAll subscribers receive messages addressed to others, including self", async () => {
+    const events = new RoomEvents();
+    const response = events.subscribe("host", true, 0, true);
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("missing response body");
+
+    await reader.read(); // ready
+    events.notifyMessage(message({ from: "host" }), 1);
+    const selfEcho = decoder.decode((await reader.read()).value);
+    events.notifyMessage(message({ from: "agent-a", to: "agent-b" }), 2);
+    const otherDirect = decoder.decode((await reader.read()).value);
+    await reader.cancel();
+
+    expect(selfEcho).toContain("event: message");
+    expect(otherDirect).toContain('"last_seq":2');
+    expect(otherDirect).toContain('"from":"agent-a"');
   });
 
   it("notifies board updates with normalized key arrays", async () => {

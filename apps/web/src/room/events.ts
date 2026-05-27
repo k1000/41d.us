@@ -10,25 +10,27 @@ interface EventSubscriber {
   participantId: string;
   controller: ReadableStreamDefaultController<Uint8Array>;
   includeSelf: boolean;
+  includeAll: boolean;
 }
 
 export interface RoomEventBus {
-  subscribe(participantId: string, includeSelf: boolean, lastSeq: number): Response;
+  subscribe(participantId: string, includeSelf: boolean, lastSeq: number, includeAll?: boolean): Response;
   notifyMessage(message: RoomMessage, lastSeq: number): void;
   notifyBoard(keys: string | string[], updatedBy: string): void;
+  notifyParticipant(participantId: string, action: string, participant?: unknown): void;
 }
 
 export class RoomEvents implements RoomEventBus {
   private readonly subscribers = new Map<string, EventSubscriber>();
   private notificationCount = 0;
 
-  subscribe(participantId: string, includeSelf: boolean, lastSeq: number): Response {
+  subscribe(participantId: string, includeSelf: boolean, lastSeq: number, includeAll = false): Response {
     let interval: ReturnType<typeof setInterval> | undefined;
     let subscriberId = "";
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         subscriberId = crypto.randomUUID();
-        this.subscribers.set(subscriberId, { participantId, controller, includeSelf });
+        this.subscribers.set(subscriberId, { participantId, controller, includeSelf, includeAll });
         enqueueSse(controller, "ready", { participant_id: participantId, last_seq: lastSeq });
         interval = setInterval(() => {
           try {
@@ -56,9 +58,11 @@ export class RoomEvents implements RoomEventBus {
   notifyMessage(message: RoomMessage, lastSeq: number): void {
     this.maybeSweep();
     for (const [id, subscriber] of this.subscribers) {
-      if (!subscriber.includeSelf && message.from === subscriber.participantId) continue;
-      if (!visibleTo(message, subscriber.participantId)) continue;
-      this.enqueueOrDelete(id, subscriber.controller, "changed", { last_seq: lastSeq });
+      if (!subscriber.includeAll) {
+        if (!subscriber.includeSelf && message.from === subscriber.participantId) continue;
+        if (!visibleTo(message, subscriber.participantId)) continue;
+      }
+      this.enqueueOrDelete(id, subscriber.controller, "message", { last_seq: lastSeq, message });
     }
   }
 
@@ -66,6 +70,13 @@ export class RoomEvents implements RoomEventBus {
     this.maybeSweep();
     for (const [id, subscriber] of this.subscribers) {
       this.enqueueOrDelete(id, subscriber.controller, "board", { keys: Array.isArray(keys) ? keys : [keys], updated_by: updatedBy });
+    }
+  }
+
+  notifyParticipant(participantId: string, action: string, participant?: unknown): void {
+    this.maybeSweep();
+    for (const [id, subscriber] of this.subscribers) {
+      this.enqueueOrDelete(id, subscriber.controller, "participant", { participant_id: participantId, action, participant });
     }
   }
 

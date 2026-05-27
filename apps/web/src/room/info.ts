@@ -7,6 +7,7 @@ export function roomInfo(invite: InviteState) {
     name: invite.roomName,
     // `||` covers pre-purpose rooms whose persisted state lacks the field.
     purpose: invite.purpose || invite.roomName,
+    ...(invite.entryMessage ? { first_message: invite.entryMessage } : {}),
     host_id: invite.hostId,
     max_participants: invite.maxParticipants,
   };
@@ -46,6 +47,7 @@ export function roomStatus(invite: InviteState) {
   const currentState = invite.roomStates?.[invite.phase];
   return {
     room: roomInfo(invite),
+    phase: invite.phase,
     participants: activeParticipants(invite.participants),
     message_count: invite.messages.length,
     last_seq: invite.nextSeq,

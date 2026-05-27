@@ -1,12 +1,12 @@
 /**
- * Hosted MCP endpoint — serves 41d.us room operations as an HTTP MCP server.
+ * Hosted MCP endpoint — serves j01n.me room operations as an HTTP MCP server.
  * No repo clone or local code needed: MCP hosts configure a URL.
  *
  * MCP client configuration:
  * ```json
  * {
  *   "mcpServers": {
- *     "41d.us": { "url": "https://41d.us/mcp" }
+ *     "j01n.me": { "url": "https://j01n.me/mcp" }
  *   }
  * }
  * ```
@@ -18,17 +18,26 @@
 import type { Env } from "./types";
 import { createRoomDirect } from "./invite";
 import type { CreateRoomBody } from "./invite";
-import { createSdkCryptoSession } from "@41d/sdk/crypto-session";
-import type { SdkCryptoSession } from "@41d/sdk/crypto-session";
+import { createSdkCryptoSession } from "@j01n/sdk/crypto-session";
+import type { SdkCryptoSession } from "@j01n/sdk/crypto-session";
 import type { RoomMessage } from "./types";
 
 // ── Unified session store (per-worker-isolate, in-memory) ───────
 // Key: roomId:participantId. Stores ECDH session + per-participant token.
 
+/** JWK-serializable session data for DO persistence. */
+interface PersistedSession {
+  privateJwk: JsonWebKey;
+  publicJwk: JsonWebKey;
+  token?: string;
+}
+
 interface SessionStore {
   ecdh: SdkCryptoSession;
-  token?: string;  // per-participant token
+  token?: string;
   roomUrl: string;
+  /** Whether this session was loaded from DO persistence (survives isolate recycle). */
+  persisted: boolean;
 }
 
 const sessions = new Map<string, SessionStore>();
@@ -48,12 +57,69 @@ function isUsingParticipantToken(roomUrl: string, participantId: string, fallbac
   return !!entry?.token && entry.token !== fallbackSecret;
 }
 
-async function ensureEcdhSession(roomId: string, participantId: string): Promise<SdkCryptoSession> {
+/**
+ * Load persisted sessions from the DO and populate the in-memory cache.
+ * Called once at startup by the first tool call that has an env reference.
+ */
+const roomsLoadedFromDo = new Set<string>();
+
+async function loadPersistedSessions(env: Env, roomUrl: string): Promise<void> {
+  const roomId = roomUrl.split("/").pop()!;
+  if (roomsLoadedFromDo.has(roomId)) return;
+  roomsLoadedFromDo.add(roomId);
+  try {
+    const stub = env.RENDEZVOUS.get(env.RENDEZVOUS.idFromName(roomId));
+    const res = await stub.fetch("https://rendezvous.internal/__load_session");
+    if (!res.ok) return;
+    const data = await res.json() as { sessions: Record<string, PersistedSession> };
+    for (const [pid, persisted] of Object.entries(data.sessions)) {
+      const key = sessionKey(roomId, pid);
+      if (sessions.has(key)) continue; // don't overwrite fresh sessions
+      try {
+        const ecdh = await createSdkCryptoSession(pid, persisted.privateJwk, persisted.publicJwk);
+        sessions.set(key, { ecdh, token: persisted.token, roomUrl, persisted: true });
+      } catch {
+        // skip corrupted sessions
+      }
+    }
+  } catch {
+    // silent fail — in-memory sessions still work
+  }
+}
+
+/** Save an ECDH session to DO storage for persistence across isolate recycles. */
+async function persistSessionToDo(env: Env, roomUrl: string, pid: string, force = false): Promise<void> {
+  const key = sessionKey(roomUrl.split("/").pop()!, pid);
+  const entry = sessions.get(key);
+  if (!entry || (entry.persisted && !force)) return;
+  try {
+    const jwks = await entry.ecdh.exportKeyPair();
+    const stub = env.RENDEZVOUS.get(env.RENDEZVOUS.idFromName(roomUrl.split("/").pop()!));
+    await stub.fetch("https://rendezvous.internal/__save_session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ participantId: pid, ...jwks, token: entry.token }),
+    });
+    entry.persisted = true;
+  } catch {
+    // silent fail
+  }
+}
+
+async function ensureEcdhSession(env: Env | undefined, roomUrl: string, participantId: string, _fallbackSecret?: string): Promise<SdkCryptoSession> {
+  const roomId = roomUrl.split("/").pop()!;
   const key = sessionKey(roomId, participantId);
   let entry = sessions.get(key);
   if (!entry) {
-    entry = { ecdh: await createSdkCryptoSession(participantId), roomUrl: "" };
-    sessions.set(key, entry);
+    // Try loading persisted sessions from DO first
+    if (env) await loadPersistedSessions(env, roomUrl);
+    entry = sessions.get(key);
+    if (!entry) {
+      entry = { ecdh: await createSdkCryptoSession(participantId), roomUrl, persisted: false };
+      sessions.set(key, entry);
+      // Persist new sessions to DO for future resilience
+      if (env) persistSessionToDo(env, roomUrl, participantId).catch(() => {});
+    }
   }
   return entry.ecdh;
 }
@@ -71,6 +137,58 @@ function clearRoomSessions(roomId: string): void {
   }
 }
 
+// ── MCP client session store (per Mcp-Session-Id) ───────────────
+//
+// Tracks the GET /mcp listening SSE stream plus any active room
+// subscriptions belonging to that MCP client. Separate from the ECDH
+// `sessions` map above (which is per room+participant, not per MCP client).
+
+/** Full parameters needed to re-establish a room subscription on reconnect. */
+interface SubscribeParams {
+  roomUrl: string;
+  secret: string;
+  participantId: string;
+  includeSelf: boolean;
+}
+
+interface RoomSubscription {
+  id: string;
+  roomId: string;
+  participantId: string;
+  params?: SubscribeParams;
+  cancel: () => void;
+}
+
+interface ClientSession {
+  id: string;
+  env?: Env;
+  listening?: ReadableStreamDefaultController<Uint8Array>;
+  heartbeat?: ReturnType<typeof setInterval>;
+  subscriptions: Map<string, RoomSubscription>;
+  nextEventId: number;
+}
+
+const SESSION_HEADER = "mcp-session-id";
+const clientSessions = new Map<string, ClientSession>();
+
+function getOrCreateClientSession(sessionId: string): ClientSession {
+  let session = clientSessions.get(sessionId);
+  if (!session) {
+    session = { id: sessionId, subscriptions: new Map(), nextEventId: 1 };
+    clientSessions.set(sessionId, session);
+  }
+  return session;
+}
+
+function deleteClientSession(sessionId: string): void {
+  const session = clientSessions.get(sessionId);
+  if (!session) return;
+  if (session.heartbeat) clearInterval(session.heartbeat);
+  for (const sub of session.subscriptions.values()) sub.cancel();
+  try { session.listening?.close(); } catch { /* already closed */ }
+  clientSessions.delete(sessionId);
+}
+
 // ── DO stub helpers (avoid HTTP loopback) ───────────────────────
 
 function getRoomStub(env: Env, roomUrlOrId: string): DurableObjectStub {
@@ -79,19 +197,19 @@ function getRoomStub(env: Env, roomUrlOrId: string): DurableObjectStub {
   return env.RENDEZVOUS.get(id);
 }
 
-async function doFetch(
+async function doFetchRaw(
   env: Env,
   roomUrl: string,
   path: string,
   secret: string,
   options: { method?: string; body?: unknown; participantId?: string } = {},
-): Promise<unknown> {
+): Promise<Response> {
   // Use per-participant token when available (more secure than room-level join_secret)
   const effectiveSecret = options.participantId
     ? getEffectiveSecret(roomUrl, options.participantId, secret)
     : secret;
   const usingToken = options.participantId
-    && isUsingParticipantToken(roomUrl, options.participantId, secret);
+    && isUsingParticipantToken(roomUrl, options.participantId, secret as string);
   const stub = getRoomStub(env, roomUrl);
   const url = new URL(path, roomUrl);
   const headers: Record<string, string> = { authorization: `Bearer ${effectiveSecret}` };
@@ -101,16 +219,37 @@ async function doFetch(
     headers["x-participant-id"] = options.participantId;
   }
   if (options.body !== undefined) headers["content-type"] = "application/json";
-  const response = await stub.fetch(url.toString(), {
+  return stub.fetch(url.toString(), {
     method: options.method ?? "GET",
     headers,
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
+}
+
+async function doFetch(
+  env: Env,
+  roomUrl: string,
+  path: string,
+  secret: string,
+  options: { method?: string; body?: unknown; participantId?: string } = {},
+): Promise<unknown> {
+  const response = await doFetchRaw(env, roomUrl, path, secret, options);
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`${path} failed: ${response.status} ${text}`);
+    throw new Error(`${path} failed: ${response.status} ${formatRoomError(text)}`);
   }
   return response.json();
+}
+
+function formatRoomError(text: string): string {
+  try {
+    const body = JSON.parse(text) as Record<string, unknown>;
+    const error = typeof body.error === "string" ? body.error : undefined;
+    const reason = typeof body.reason === "string" ? body.reason : undefined;
+    if (error && reason) return `${error}: ${reason}`;
+    if (error) return error;
+  } catch { /* fall through to raw text */ }
+  return text;
 }
 
 function parseRoomId(inviteJson: string): { roomId: string; roomUrl: string; secret: string } {
@@ -152,7 +291,7 @@ interface McpRequest {
 interface McpSuccess {
   jsonrpc: "2.0";
   id: number | string;
-  result: { content: Array<{ type: "text"; text: string }> };
+  result: unknown;
 }
 
 interface McpError {
@@ -161,8 +300,12 @@ interface McpError {
   error: { code: number; message: string };
 }
 
-function mcpResult(id: number | string, text: unknown): McpSuccess {
-  return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(text, null, 2) }] } };
+function mcpResult(id: number | string, result: unknown): McpSuccess {
+  return { jsonrpc: "2.0", id, result };
+}
+
+function mcpToolResult(id: number | string, text: unknown): McpSuccess {
+  return mcpResult(id, { content: [{ type: "text", text: JSON.stringify(text, null, 2) }] });
 }
 
 function mcpError(id: number | string | null, code: number, message: string): McpError {
@@ -171,10 +314,16 @@ function mcpError(id: number | string | null, code: number, message: string): Mc
 
 // ── Tool registry ───────────────────────────────────────────────
 
+interface ToolContext {
+  sessionId?: string;
+  waitUntil?: (promise: Promise<void>) => void;
+}
+
 interface ToolDef {
   description: string;
   inputSchema: Record<string, unknown>;
-  handler: (env: Env, params: Record<string, unknown>) => Promise<unknown>;
+  handler?: (env: Env, params: Record<string, unknown>, ctx: ToolContext) => Promise<unknown>;
+  streaming?: (env: Env, params: Record<string, unknown>, requestId: number | string) => Promise<Response>;
 }
 
 interface JoinResponse {
@@ -183,11 +332,11 @@ interface JoinResponse {
   peers?: Array<{ id: string; public_key: string }>;
 }
 
-async function createRoomTool(env: Env, params: Record<string, unknown>): Promise<unknown> {
+async function createRoomTool(env: Env, params: Record<string, unknown>, ctx: ToolContext): Promise<unknown> {
   const hostId = (params.hostId as string) ?? "agent";
-  const room = await createRoomDirect(env, createHostedRoomBody(params, hostId), "https://41d.us");
+  const room = await createRoomDirect(env, createHostedRoomBody(params, hostId), "https://j01n.me");
   const stub = env.RENDEZVOUS.get(env.RENDEZVOUS.idFromName(room.roomId));
-  const hostCrypto = await ensureEcdhSession(room.roomId, hostId);
+  const hostCrypto = await ensureEcdhSession(env, room.roomUrl, hostId, room.joinSecret);
   const { public_key: hostPublicKey } = await hostCrypto.announceKeyBody();
 
   const joinResponse = await stub.fetch(`https://rendezvous.internal/r/${room.roomId}/participants/${encodeURIComponent(hostId)}`, {
@@ -196,24 +345,32 @@ async function createRoomTool(env: Env, params: Record<string, unknown>): Promis
     body: JSON.stringify({ public_key: hostPublicKey, state: "free", status: "joined via hosted MCP" }),
   });
   const joinData = await joinResponse.json() as JoinResponse;
-  if (joinData.participant_token) storeToken(room.roomId, hostId, joinData.participant_token, room.roomUrl);
+  if (joinData.participant_token) {
+    storeToken(room.roomId, hostId, joinData.participant_token, room.roomUrl);
+    await persistSessionToDo(env, room.roomUrl, hostId, true);
+  }
   if (joinData.peers?.length) await hostCrypto.processPeerKeys(joinData.peers);
 
+  const hostToken = getEffectiveSecret(room.roomUrl, hostId, room.joinSecret);
   await stub.fetch(`https://rendezvous.internal/r/${room.roomId}/`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${room.joinSecret}`,
-      "x-participant-id": hostId,
+      authorization: `Bearer ${hostToken}`,
+      ...(hostToken === room.joinSecret ? { "x-participant-id": hostId } : {}),
       "content-type": "application/json",
     },
     body: JSON.stringify({ to: "all", intent: "key.exchange", body: { public_key: hostPublicKey } }),
   });
+
+  // Auto-subscribe the MCP session to room events (no separate subscribe_room call needed)
+  const subscribed = await autoSubscribeRoom(env, ctx, room.roomUrl, room.joinSecret, hostId, room.roomId);
 
   return {
     ...room.data,
     host_joined: true,
     host_cursor: joinData.cursor ?? 0,
     handoff: JSON.stringify({ access: room.roomUrl, join_secret: room.joinSecret }),
+    subscription_active: subscribed,
   };
 }
 
@@ -237,9 +394,258 @@ function parseJsonParam(value: unknown): Record<string, unknown> | undefined {
   return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
 }
 
+// ── SSE bridge: room /events → MCP streaming response ──────────
+
+const SSE_ENCODER = new TextEncoder();
+const SSE_DECODER = new TextDecoder();
+
+async function openEventsStream(
+  env: Env,
+  roomUrl: string,
+  secret: string,
+  participantId: string,
+  includeSelf: boolean,
+): Promise<ReadableStream<Uint8Array>> {
+  const path = `/events${includeSelf ? "?include_self=true" : ""}`;
+  const upstream = await doFetchRaw(env, roomUrl, path, secret, { participantId });
+  if (!upstream.ok || !upstream.body) {
+    const text = await upstream.text().catch(() => "");
+    throw new Error(`/events failed: ${upstream.status} ${formatRoomError(text)}`);
+  }
+  return upstream.body;
+}
+
+async function streamRoomEvents(
+  env: Env,
+  params: Record<string, unknown>,
+  requestId: number | string,
+): Promise<Response> {
+  const { roomUrl, secret } = parseRoomId(params.inviteJson as string);
+  const participantId = params.participantId as string;
+  if (!participantId) throw new Error("participantId is required");
+
+  const body = await openEventsStream(env, roomUrl, secret, participantId, params.includeSelf === true);
+  return new Response(mcpSseFromRoomSse(body, requestId), {
+    headers: { "content-type": "text/event-stream", "cache-control": "no-store" },
+  });
+}
+
+function mcpSseFromRoomSse(
+  upstream: ReadableStream<Uint8Array>,
+  requestId: number | string,
+): ReadableStream<Uint8Array> {
+  const reader = upstream.getReader();
+  let buffer = "";
+  let finalSent = false;
+
+  const sendFinal = (controller: ReadableStreamDefaultController<Uint8Array>, reason: string): void => {
+    if (finalSent) return;
+    finalSent = true;
+    controller.enqueue(SSE_ENCODER.encode(formatMcpFrame({
+      jsonrpc: "2.0", id: requestId, result: { ok: true, ended: reason },
+    })));
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          sendFinal(controller, "upstream-closed");
+          controller.close();
+          return;
+        }
+        buffer += SSE_DECODER.decode(value, { stream: true });
+        let idx = buffer.indexOf("\n\n");
+        while (idx !== -1) {
+          const block = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const frame = roomEventToMcpFrame(block);
+          if (frame) controller.enqueue(SSE_ENCODER.encode(frame));
+          idx = buffer.indexOf("\n\n");
+        }
+      } catch (err) {
+        if (!finalSent) {
+          finalSent = true;
+          const message = err instanceof Error ? err.message : String(err);
+          controller.enqueue(SSE_ENCODER.encode(formatMcpFrame({
+            jsonrpc: "2.0", id: requestId, error: { code: -32603, message },
+          })));
+        }
+        controller.close();
+      }
+    },
+    cancel() {
+      reader.cancel().catch(() => { /* upstream already gone */ });
+    },
+  });
+}
+
+function roomEventToMcpFrame(block: string): string | null {
+  let event = "message";
+  let data = "";
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event: ")) event = line.slice(7).trim();
+    else if (line.startsWith("data: ")) data += (data ? "\n" : "") + line.slice(6);
+  }
+  // Drop transport-level noise; the MCP client doesn't need it.
+  if (event === "ping" || event === "ready") return null;
+  let params: unknown = {};
+  if (data) {
+    try { params = JSON.parse(data); } catch { params = { raw: data }; }
+  }
+  return formatMcpFrame({
+    jsonrpc: "2.0",
+    method: `notifications/j01n.me/${event}`,
+    params,
+  });
+}
+
+function formatMcpFrame(payload: unknown): string {
+  return `event: message\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
+async function subscribeRoomTool(
+  env: Env,
+  params: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<unknown> {
+  if (!ctx.sessionId) throw new Error("subscribe_room requires the Mcp-Session-Id header");
+  const session = clientSessions.get(ctx.sessionId);
+  if (!session?.listening) throw new Error("no active listening stream for this session; open GET /mcp first");
+
+  const { roomId, roomUrl, secret } = parseRoomId(params.inviteJson as string);
+  const participantId = params.participantId as string;
+  if (!participantId) throw new Error("participantId is required");
+
+  const body = await openEventsStream(env, roomUrl, secret, participantId, params.includeSelf === true);
+  const subscriptionId = crypto.randomUUID();
+  const reader = body.getReader();
+  let cancelled = false;
+  const cancel = (): void => {
+    if (cancelled) return;
+    cancelled = true;
+    reader.cancel().catch(() => { /* upstream already gone */ });
+    // Keep subscription metadata when the listening stream disappeared; it can be restored on reconnect.
+    if (session.listening && session.subscriptions.get(subscriptionId)?.cancel === cancel) session.subscriptions.delete(subscriptionId);
+  };
+
+  const subParams: SubscribeParams = { roomUrl, secret, participantId, includeSelf: (params.includeSelf as boolean) ?? true };
+  const subscription: RoomSubscription = { id: subscriptionId, roomId, participantId, params: subParams, cancel };
+  session.subscriptions.set(subscriptionId, subscription);
+
+  // Store env for self-healing on reconnect
+  session.env = env;
+
+  const pump = pumpRoomEvents(session, reader, cancel);
+  ctx.waitUntil?.(pump);
+
+  return { ok: true, subscription_id: subscriptionId, room_id: roomId };
+}
+
+async function unsubscribeRoomTool(
+  _env: Env,
+  params: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<unknown> {
+  if (!ctx.sessionId) throw new Error("unsubscribe_room requires the Mcp-Session-Id header");
+  const session = clientSessions.get(ctx.sessionId);
+  const subscriptionId = params.subscriptionId as string;
+  const sub = session?.subscriptions.get(subscriptionId);
+  if (!sub) return { ok: true, found: false };
+  sub.cancel();
+  return { ok: true, found: true };
+}
+
+/**
+ * Auto-subscribe an MCP session to room events after create/join.
+ * If the session has an active listening stream, opens the room
+ * events stream and pumps notifications into the session. This
+ * eliminates the "immediately start watching" footgun.
+ */
+async function autoSubscribeRoom(
+  env: Env,
+  ctx: ToolContext,
+  roomUrl: string,
+  secret: string,
+  participantId: string,
+  roomId: string,
+): Promise<boolean> {
+  if (!ctx.sessionId) return false;
+  const session = clientSessions.get(ctx.sessionId);
+  if (!session?.listening) return false;
+  try {
+    const body = await openEventsStream(env, roomUrl, secret, participantId, true);
+    const subscriptionId = crypto.randomUUID();
+    const reader = body.getReader();
+    let cancelled = false;
+    const cancel = (): void => {
+      if (cancelled) return;
+      cancelled = true;
+      reader.cancel().catch(() => {});
+      // Keep subscription metadata when the listening stream disappeared; it can be restored on reconnect.
+      if (session.listening && session.subscriptions.get(subscriptionId)?.cancel === cancel) session.subscriptions.delete(subscriptionId);
+    };
+    const params: SubscribeParams = { roomUrl, secret, participantId, includeSelf: true };
+    const subscription: RoomSubscription = { id: subscriptionId, roomId, participantId, params, cancel };
+    session.subscriptions.set(subscriptionId, subscription);
+    ctx.waitUntil?.(pumpRoomEvents(session, reader, cancel));
+    // Store env for self-healing on reconnect
+    session.env = env;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Check whether the current session has an active subscription to a room. */
+function hasActiveSubscription(sessionId: string, roomId: string): boolean {
+  const session = clientSessions.get(sessionId);
+  if (!session) return false;
+  for (const sub of session.subscriptions.values()) {
+    if (sub.roomId === roomId) return true;
+  }
+  return false;
+}
+
+async function pumpRoomEvents(
+  session: ClientSession,
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  cancel: () => void,
+): Promise<void> {
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      buffer += SSE_DECODER.decode(value, { stream: true });
+      let idx = buffer.indexOf("\n\n");
+      while (idx !== -1) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const frame = roomEventToMcpFrame(block);
+        if (!frame) {
+          idx = buffer.indexOf("\n\n");
+          continue;
+        }
+        if (!session.listening) return;
+        const id = session.nextEventId++;
+        try {
+          session.listening.enqueue(SSE_ENCODER.encode(`id: ${id}\n${frame}`));
+        } catch {
+          return; // listening stream closed
+        }
+        idx = buffer.indexOf("\n\n");
+      }
+    }
+  } finally {
+    cancel();
+  }
+}
+
 const tools: Record<string, ToolDef> = {
   create_room: {
-    description: "Create a new 41d.us encrypted coordination room and auto-join the host. Returns invite + handoff.",
+    description: "Create a new j01n.me encrypted coordination room and auto-join the host. When used within an MCP session with an active listening stream (GET /mcp), the room is automatically subscribed so live events arrive without a separate subscribe_room call. If there is no listening stream, use read_messages to poll.",
     inputSchema: {
       type: "object",
       properties: {
@@ -258,7 +664,7 @@ const tools: Record<string, ToolDef> = {
   },
 
   join_room: {
-    description: "Join a 41d.us room using a handoff JSON.",
+    description: "Join a j01n.me room using a handoff JSON. When used within an MCP session with an active listening stream (GET /mcp), the room is automatically subscribed so live events arrive without a separate subscribe_room call. If there is no listening stream, use read_messages to poll.",
     inputSchema: {
       type: "object",
       properties: {
@@ -267,10 +673,10 @@ const tools: Record<string, ToolDef> = {
       },
       required: ["inviteJson", "participantId"],
     },
-    handler: async (env, params) => {
-      const { roomId, roomUrl, secret } = parseRoomId(params.inviteJson as string);
+    handler: async (env, params, ctx) => {
+      const { roomUrl, secret } = parseRoomId(params.inviteJson as string);
       const participantId = params.participantId as string;
-      const crypto = await ensureEcdhSession(roomId, participantId);
+      const crypto = await ensureEcdhSession(env, roomUrl, participantId, secret);
       const { public_key } = await crypto.announceKeyBody();
 
       const joinResult = await doFetch(env, roomUrl, `/participants/${encodeURIComponent(participantId)}`, secret, {
@@ -290,10 +696,22 @@ const tools: Record<string, ToolDef> = {
 
       // Store session with per-participant token for subsequent calls
       if (joinResult.participant_token) {
-        storeToken(roomId, participantId, joinResult.participant_token, roomUrl);
+        storeToken(roomUrl.split("/").pop()!, participantId, joinResult.participant_token, roomUrl);
+        await persistSessionToDo(env, roomUrl, participantId, true);
       }
 
-      return { ok: true, room_id: roomId, room_url: roomUrl, participant_id: participantId, cursor: joinResult.cursor ?? 0, participant_token: joinResult.participant_token };
+      // Auto-subscribe the MCP session to room events (no separate subscribe_room call needed)
+      const subscribed = await autoSubscribeRoom(env, ctx, roomUrl, secret, participantId, roomUrl.split("/").pop()!);
+
+      return {
+        ok: true,
+        room_id: roomUrl.split("/").pop()!,
+        room_url: roomUrl,
+        participant_id: participantId,
+        cursor: joinResult.cursor ?? 0,
+        participant_token: joinResult.participant_token,
+        subscription_active: subscribed,
+      };
     },
   },
 
@@ -311,9 +729,9 @@ const tools: Record<string, ToolDef> = {
       required: ["inviteJson", "participantId", "to", "body"],
     },
     handler: async (env, params) => {
-      const { roomId, roomUrl, secret } = parseRoomId(params.inviteJson as string);
+      const { roomUrl, secret } = parseRoomId(params.inviteJson as string);
       const participantId = params.participantId as string;
-      const crypto = await ensureEcdhSession(roomId, participantId);
+      const crypto = await ensureEcdhSession(env, roomUrl, participantId, secret);
 
       // Ensure self-key is registered for self-include, then refresh peer keys
       // (handles cross-isolate session loss).
@@ -344,9 +762,9 @@ const tools: Record<string, ToolDef> = {
       required: ["inviteJson", "participantId"],
     },
     handler: async (env, params) => {
-      const { roomId, roomUrl, secret } = parseRoomId(params.inviteJson as string);
+      const { roomUrl, secret } = parseRoomId(params.inviteJson as string);
       const participantId = params.participantId as string;
-      const crypto = await ensureEcdhSession(roomId, participantId);
+      const crypto = await ensureEcdhSession(env, roomUrl, participantId, secret);
 
       // Always include self messages so senders can read their own messages.
       const path = params.all ? "/?view=all&include_self=true" : "/?include_self=true";
@@ -451,33 +869,174 @@ const tools: Record<string, ToolDef> = {
   get_room_info: {
     description: "Get room metadata without joining.",
     inputSchema: { type: "object", properties: { inviteJson: { type: "string" } }, required: ["inviteJson"] },
-    handler: async (env, params) => {
-      const { roomUrl, secret } = parseRoomId(params.inviteJson as string);
-      return doFetch(env, roomUrl, "/status", secret);
+    handler: async (env, params, ctx) => {
+      const { roomUrl, roomId, secret } = parseRoomId(params.inviteJson as string);
+      const result = await doFetch(env, roomUrl, "/status", secret) as Record<string, unknown>;
+      return {
+        ...result,
+        subscription_active: ctx.sessionId ? hasActiveSubscription(ctx.sessionId, roomId) : false,
+      };
     },
+  },
+
+  watch_room: {
+    description: "Subscribe to live room events (messages, board, participants). Streams JSON-RPC notifications (notifications/j01n.me/{message,board,participant}) until the client cancels. Message notifications include the encrypted RoomMessage payload for the participant to decrypt locally.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        inviteJson: { type: "string" },
+        participantId: { type: "string" },
+        includeSelf: { type: "boolean" },
+      },
+      required: ["inviteJson", "participantId"],
+    },
+    streaming: streamRoomEvents,
+  },
+
+  subscribe_room: {
+    description: "Bind room events to the current MCP session's listening stream (GET /mcp). Returns immediately with a subscription_id; events flow as JSON-RPC notifications down the listening stream. Requires Mcp-Session-Id header and an active GET /mcp connection.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        inviteJson: { type: "string" },
+        participantId: { type: "string" },
+        includeSelf: { type: "boolean" },
+      },
+      required: ["inviteJson", "participantId"],
+    },
+    handler: subscribeRoomTool,
+  },
+
+  unsubscribe_room: {
+    description: "Cancel an active room subscription by subscription_id (from subscribe_room). Requires Mcp-Session-Id header.",
+    inputSchema: {
+      type: "object",
+      properties: { subscriptionId: { type: "string" } },
+      required: ["subscriptionId"],
+    },
+    handler: unsubscribeRoomTool,
   },
 };
 
 // ── HTTP handler ────────────────────────────────────────────────
 
+const LISTENING_HEARTBEAT_MS = 25_000;
+
+interface HandlerOpts {
+  waitUntil?: (promise: Promise<void>) => void;
+}
+
 /**
  * Handle an incoming MCP-over-HTTP request (Streamable HTTP transport).
  */
-export async function handleMcpRequest(request: Request, env?: Env): Promise<Response> {
+export async function handleMcpRequest(request: Request, env?: Env, opts: HandlerOpts = {}): Promise<Response> {
+  const sessionId = request.headers.get(SESSION_HEADER) ?? undefined;
+
+  if (request.method === "GET") {
+    return sessionId ? handleListeningStream(sessionId) : handleDocsFallback();
+  }
+  if (request.method === "DELETE") {
+    if (!sessionId) return jsonRpcResponse(mcpError(null, -32600, "missing Mcp-Session-Id header"), 400);
+    deleteClientSession(sessionId);
+    return new Response(null, { status: 204 });
+  }
   if (request.method !== "POST") return jsonRpcResponse(mcpError(null, -32000, "Method not allowed"), 405);
 
   const parsed = await parseMcpBody(request);
   if (parsed instanceof Response) return parsed;
 
+  const ctx: ToolContext = { sessionId, waitUntil: opts.waitUntil };
   switch (parsed.method) {
     case "initialize": return handleInitialize(parsed);
     case "notifications/initialized":
     case "notifications/cancelled": return handleNotification();
     case "tools/list": return handleToolsList(parsed);
-    case "tools/call": return handleToolCall(env, parsed);
+    case "tools/call": return handleToolCall(env, parsed, ctx);
     case "shutdown": return handleShutdown(parsed);
     default: return jsonRpcResponse(mcpError(parsed.id ?? null, -32601, `Method not found: ${parsed.method}`), 404);
   }
+}
+
+function handleListeningStream(sessionId: string): Response {
+  const session = getOrCreateClientSession(sessionId);
+
+  // If there's an existing listening stream, replace it gracefully
+  if (session.listening) {
+    if (session.heartbeat) clearInterval(session.heartbeat);
+    try { session.listening.close(); } catch { /* already closed */ }
+    session.listening = undefined;
+    session.heartbeat = undefined;
+    // Keep subscriptions — they'll be restored on the new stream
+  }
+
+  const stream = new ReadableStream<Uint8Array>({
+    start: async (controller) => {
+      session.listening = controller;
+      session.heartbeat = setInterval(() => {
+        try { controller.enqueue(SSE_ENCODER.encode(": heartbeat\n\n")); }
+        catch { /* will be torn down on cancel */ }
+      }, LISTENING_HEARTBEAT_MS);
+      controller.enqueue(SSE_ENCODER.encode(formatMcpFrame({
+        jsonrpc: "2.0",
+        method: "notifications/j01n.me/listening",
+        params: { session_id: sessionId },
+      })));
+
+      // Self-heal: re-establish any stale subscriptions on the new stream
+      if (session.env) {
+        const restored: string[] = [];
+        for (const [subId, sub] of session.subscriptions) {
+          if (!sub.params) continue;
+          try {
+            const body = await openEventsStream(session.env, sub.params.roomUrl, sub.params.secret, sub.params.participantId, sub.params.includeSelf);
+            const reader = body.getReader();
+            let cancelled = false;
+            const cancel = (): void => {
+              if (cancelled) return;
+              cancelled = true;
+              reader.cancel().catch(() => {});
+              // Keep subscription metadata when the listening stream disappeared; it can be restored on reconnect.
+              if (session.listening && session.subscriptions.get(subId)?.cancel === cancel) session.subscriptions.delete(subId);
+            };
+            sub.cancel = cancel;
+            // Pump directly — no ctx.waitUntil available, but DO stays alive for fire-and-forget
+            pumpRoomEvents(session, reader, cancel).catch(() => {});
+            restored.push(sub.roomId);
+          } catch {
+            // If re-subscription fails, keep the subscription slot but don't reconnect
+          }
+        }
+        if (restored.length > 0) {
+          controller.enqueue(SSE_ENCODER.encode(formatMcpFrame({
+            jsonrpc: "2.0",
+            method: "notifications/j01n.me/restored",
+            params: { restored_rooms: restored },
+          })));
+        }
+      }
+    },
+    cancel() {
+      if (session.heartbeat) clearInterval(session.heartbeat);
+      session.heartbeat = undefined;
+      session.listening = undefined;
+      // Keep subscription metadata so reconnecting GET /mcp can restore room streams.
+    },
+  });
+
+  return new Response(stream, {
+    headers: { "content-type": "text/event-stream", "cache-control": "no-store" },
+  });
+}
+
+function handleDocsFallback(): Response {
+  return new Response(JSON.stringify({
+    name: "j01n.me MCP endpoint",
+    version: "0.1.0",
+    protocol: "MCP Streamable HTTP",
+    usage: "POST JSON-RPC 2.0; GET with Mcp-Session-Id for the listening SSE stream; DELETE with Mcp-Session-Id to terminate.",
+    docs: "https://j01n.me/client/MCP.md",
+    configure: { mcpServers: { "j01n.me": { url: "https://j01n.me/mcp" } } },
+  }), { headers: { "content-type": "application/json" } });
 }
 
 async function parseMcpBody(request: Request): Promise<McpRequest | Response> {
@@ -492,11 +1051,13 @@ async function parseMcpBody(request: Request): Promise<McpRequest | Response> {
 }
 
 function handleInitialize(body: McpRequest): Response {
+  const sessionId = crypto.randomUUID();
+  getOrCreateClientSession(sessionId);
   return jsonRpcResponse(mcpResult(body.id ?? 0, {
     protocolVersion: "2024-11-05",
     capabilities: { tools: {} },
-    serverInfo: { name: "41d.us", version: "0.1.0" },
-  }));
+    serverInfo: { name: "j01n.me", version: "0.1.0" },
+  }), 200, { [SESSION_HEADER]: sessionId });
 }
 
 function handleNotification(): Response {
@@ -512,14 +1073,17 @@ function handleToolsList(body: McpRequest): Response {
   return jsonRpcResponse(mcpResult(body.id ?? 0, { tools: toolList }));
 }
 
-async function handleToolCall(env: Env | undefined, body: McpRequest): Promise<Response> {
+async function handleToolCall(env: Env | undefined, body: McpRequest, ctx: ToolContext): Promise<Response> {
   const name = (body.params?.name as string) ?? "";
   const tool = tools[name];
   if (!tool) return jsonRpcResponse(mcpError(body.id ?? 0, -32601, `Tool not found: ${name}`), 404);
   if (!env) return jsonRpcResponse(mcpError(body.id ?? 0, -32603, "MCP endpoint not configured with environment bindings"), 500);
+  const args = (body.params?.arguments ?? {}) as Record<string, unknown>;
   try {
-    const result = await tool.handler(env, (body.params?.arguments ?? {}) as Record<string, unknown>);
-    return jsonRpcResponse(mcpResult(body.id ?? 0, result));
+    if (tool.streaming) return await tool.streaming(env, args, body.id ?? 0);
+    if (!tool.handler) throw new Error(`tool ${name} has no handler`);
+    const result = await tool.handler(env, args, ctx);
+    return jsonRpcResponse(mcpToolResult(body.id ?? 0, result));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return jsonRpcResponse(mcpError(body.id ?? 0, -32603, message), 500);
@@ -530,9 +1094,9 @@ function handleShutdown(body: McpRequest): Response {
   return jsonRpcResponse(mcpResult(body.id ?? 0, null));
 }
 
-function jsonRpcResponse(body: McpSuccess | McpError, status = 200): Response {
+function jsonRpcResponse(body: McpSuccess | McpError, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
   });
 }

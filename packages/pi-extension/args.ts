@@ -23,10 +23,11 @@ interface ArgParser {
 }
 
 const envParser: ArgParser = { matches: isEnvInvocation, parse: envParsedArgs };
+const createParser: ArgParser = { matches: (cmd) => cmd === "create", parse: createParsedArgs };
 const urlParser: ArgParser = { matches: (_cmd, args) => isUrlArg(args[1]), parse: urlParsedArgs };
 const inviteParser: ArgParser = { matches: (_cmd, args) => !!args[1], parse: inviteParsedArgs };
 const restParser: ArgParser = { matches: () => true, parse: (cmd, args) => ({ cmd, rest: args.slice(1) }) };
-const argParsers = [envParser, urlParser, inviteParser];
+const argParsers = [envParser, createParser, urlParser, inviteParser];
 
 function envParsedArgs(cmd: string, args: string[], env: EnvVars): ParsedArgs {
   return { cmd, roomUrlOrInvite: env.ROOM_URL, joinSecret: env.JOIN_SECRET, me: env.ME, rest: args.slice(1) };
@@ -34,6 +35,11 @@ function envParsedArgs(cmd: string, args: string[], env: EnvVars): ParsedArgs {
 
 function urlParsedArgs(cmd: string, args: string[]): ParsedArgs {
   return { cmd, roomUrlOrInvite: args[1], joinSecret: args[2], me: args[3], rest: args.slice(4) };
+}
+
+function createParsedArgs(cmd: string, args: string[]): ParsedArgs {
+  if (isUrlArg(args[1])) return { cmd, roomUrlOrInvite: args[1], rest: args.slice(2) };
+  return { cmd, rest: args.slice(1) };
 }
 
 function inviteParsedArgs(cmd: string, args: string[]): ParsedArgs {

@@ -6,7 +6,7 @@
  */
 
 import { DEFAULT_MAX_PARTICIPANTS, INVITE_TTL_MS } from "../../src/constants";
-import { hashJoinSecret, randomBase64Url } from "@41d/sdk/crypto";
+import { hashJoinSecret, randomBase64Url } from "@j01n/sdk/crypto";
 import { RendezvousSession } from "../../src/rendezvous";
 
 /** Create a mock DurableObjectState with in-memory storage. */
@@ -75,7 +75,7 @@ export async function bootstrapRoom(opts: RoomOpts = {}): Promise<RoomFixture> {
   }));
 
   if (!res.ok) throw new Error(`bootstrapRoom failed: ${res.status}`);
-  return { session, roomId, joinSecret, roomPath: `/r/${roomId}` };
+  return { session, roomId, joinSecret, roomPath: `/r/${roomId}`, participantTokens: {} };
 }
 
 export interface RoomFixture {
@@ -83,12 +83,19 @@ export interface RoomFixture {
   roomId: string;
   joinSecret: string;
   roomPath: string;
+  participantTokens: Record<string, string>;
 }
 
 export function authHeaders(secret: string, participantId?: string): Record<string, string> {
   const headers: Record<string, string> = { authorization: `Bearer ${secret}` };
   if (participantId) headers["x-participant-id"] = participantId;
   return headers;
+}
+
+export function participantAuthHeaders(fixture: RoomFixture, participantId: string): Record<string, string> {
+  const token = fixture.participantTokens[participantId];
+  if (!token) throw new Error(`missing participant token for ${participantId}; join the participant first`);
+  return { authorization: `Bearer ${token}` };
 }
 
 export async function roomRequest(fixture: RoomFixture, path = "", init?: RequestInit): Promise<Response> {
@@ -98,34 +105,40 @@ export async function roomRequest(fixture: RoomFixture, path = "", init?: Reques
 export async function deleteParticipant(fixture: RoomFixture, targetId: string, actorId?: string): Promise<Response> {
   return roomRequest(fixture, `/participants/${encodeURIComponent(targetId)}`, {
     method: "DELETE",
-    headers: authHeaders(fixture.joinSecret, actorId),
+    headers: participantAuthHeaders(fixture, actorId ?? targetId),
   });
 }
 
 export async function closeRoom(fixture: RoomFixture): Promise<Response> {
   return roomRequest(fixture, "", {
     method: "DELETE",
-    headers: authHeaders(fixture.joinSecret, "host"),
+    headers: participantAuthHeaders(fixture, "host"),
   });
 }
 
-export async function getRoomJson<T>(fixture: RoomFixture, path: string): Promise<T> {
-  const res = await roomRequest(fixture, path, { headers: authHeaders(fixture.joinSecret) });
+export async function getRoomJson<T>(fixture: RoomFixture, path: string, participantId = Object.keys(fixture.participantTokens)[0]): Promise<T> {
+  if (!participantId) throw new Error("getRoomJson needs a joined participant");
+  const res = await roomRequest(fixture, path, { headers: participantAuthHeaders(fixture, participantId) });
   expect(res.status).toBe(200);
   return await res.json() as T;
 }
 
 export async function joinParticipant(fixture: RoomFixture, participantId: string): Promise<Response> {
-  return fixture.session.fetch(new Request(`https://room${fixture.roomPath}/participants/${encodeURIComponent(participantId)}`, {
+  const response = await fixture.session.fetch(new Request(`https://room${fixture.roomPath}/participants/${encodeURIComponent(participantId)}`, {
     method: "PUT",
     headers: { ...authHeaders(fixture.joinSecret), "content-type": "application/json" },
   }));
+  if (response.ok) {
+    const body = await response.clone().json() as { participant_token?: string };
+    if (body.participant_token) fixture.participantTokens[participantId] = body.participant_token;
+  }
+  return response;
 }
 
 export async function announceKey(fixture: RoomFixture, participantId: string): Promise<Response> {
   return roomRequest(fixture, "", {
     method: "POST",
-    headers: { ...authHeaders(fixture.joinSecret, participantId), "content-type": "application/json" },
+    headers: { ...participantAuthHeaders(fixture, participantId), "content-type": "application/json" },
     body: JSON.stringify({ to: "all", intent: "key.exchange", body: { public_key: `${participantId}-raw-key` } }),
   });
 }
@@ -144,14 +157,14 @@ export function decodedPayload<T>(body: unknown): T {
 export async function sendMessage(fixture: RoomFixture, participantId: string, to: string, body: unknown): Promise<Response> {
   return fixture.session.fetch(new Request(`https://room${fixture.roomPath}`, {
     method: "POST",
-    headers: { ...authHeaders(fixture.joinSecret, participantId), "content-type": "application/json" },
+    headers: { ...participantAuthHeaders(fixture, participantId), "content-type": "application/json" },
     body: JSON.stringify({ to, body: encryptedPayload(body) }),
   }));
 }
 
 export async function readMessages(fixture: RoomFixture, participantId: string, after = 0): Promise<Response> {
   return fixture.session.fetch(new Request(`https://room${fixture.roomPath}?after=${after}`, {
-    headers: authHeaders(fixture.joinSecret, participantId),
+    headers: participantAuthHeaders(fixture, participantId),
   }));
 }
 
